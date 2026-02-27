@@ -36,7 +36,11 @@ Chaque agent écoute sur un port UDP différent (`8000` et `8002`) et échange d
 
 Voici les en‑têtes des paquets échangés entre les deux agents, vus dans Wireshark, avec la charge utile décodée (la partie JSON est une **vue décodée du CBOR**).
 
-![Headers Wireshark](./doc/header-wireshark.png)
+![Headers Wireshark](./doc/images/header-wireshark.png)
+
+La capture réseau complète utilisée pour cet exemple est disponible dans le dépôt :
+
+- [`starting-peer-annouced.pcap`](./doc/pcap/starting-peer-annouced.pcap)
 
 #### Annonce initiale du nœud A vers le nœud B
 
