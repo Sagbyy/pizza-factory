@@ -1,15 +1,3 @@
-## Format des données des requêtes (CBOR)
-
-Les données échangées entre agents (annonces, pings, pongs, etc.) sont **sérialisées en CBOR** (*Concise Binary Object Representation*) avant d’être envoyées sur le réseau.
-
-- **Binaire et compact** : les objets applicatifs sont encodés en binaire, ce qui réduit la taille des paquets par rapport à un JSON texte.
-- **Efficace** : l’encodage/décodage est rapide, ce qui limite la surcharge côté client et côté serveur.
-- **Typé** : CBOR gère nativement des types riches (entiers, chaînes, tableaux, objets, tags, etc.), ce qui permet de préserver la structure des messages.
-
-Concrètement, au lieu d’envoyer un corps de requête en JSON (`{"clé": "valeur"}`), chaque agent envoie l’équivalent **encodé en CBOR**.  
-Les extraits JSON ci‑dessous sont donc une **représentation lisible** de la charge utile CBOR décodée (par exemple via Wireshark), pas le contenu exact transporté sur le fil.
-
-
 ## Exemple : lancement d'une chaîne de 2 nœuds
 
 Dans cet exemple, nous démarrons une chaîne minimale de deux agents qui vont :
@@ -187,3 +175,109 @@ Pareil le deuxième répond et lui renvoie un ping ainsi de suite afin de garant
     }
 }
 ```
+
+## Spécification du protocole observé
+
+L’analyse des captures réseau montre que le système repose sur une architecture distribuée de type peer-to-peer, utilisant deux mécanismes complémentaires :
+
+- **UDP** pour la découverte et la propagation d’informations entre nœuds (protocole de type Gossip).
+
+- **TCP** pour l’exécution de commandes et les transferts de données nécessitant de la fiabilité.
+
+Le fonctionnement global du protocole peut être séparé en deux phases principales.
+### Phase 1 : Découverte et diffusion (UDP)
+
+La première phase du protocole repose sur un mécanisme de découverte de nœuds utilisant le protocole UDP.
+
+Chaque nœud du réseau diffuse périodiquement des messages afin d’informer les autres nœuds de son adresse réseau, ses capacités, la liste de pairs connus
+
+
+Ces messages correspondent à un mécanisme de type Gossip (ou protocole épidémique): 
+- Chaque nœud communique avec un nombre limité de voisins.
+
+- Les informations connues sont échangées et propagées progressivement. Aucune autorité centrale n’est nécessaire
+
+Ce mécanisme permet :
+
+- une propagation rapide de l’information
+
+- une tolérance aux pannes
+
+- une découverte dynamique des pairs
+
+Les messages observés dans cette phase comprennent notamment :
+
+1. Announce : annonce la présence d’un nœud et ses caractéristiques. Champs typiques :
+
+- node_addr : adresse du nœud
+
+- capabilities : liste des fonctionnalités supportées
+
+- peers : liste des pairs connus
+
+- version
+
+- generation
+
+2. Ping / Pong : Messages de heartbeat permettant de vérifier que les pairs sont toujours actifs. 
+Ces messages servent à maintenir une vision cohérente du réseau.
+
+UDP permet une connexion rapide, continuelle, et tolérant quelques pertes de données. Les noeuds se découvrent et propagent des informations
+de manière rapide avec ce protocole.
+
+La liste des pairs est progressivement enrichie. Un noeud peut choisir le pair apte à exécuter un service.  
+Il établit une connexion TCP vers le pair approprié, qui devient le service applicatif endpoint.
+
+### Phase 2 : Exécution des commandes (TCP)
+Après la phase de découverte, les opérations applicatives utilisent TCP.
+
+Contrairement à UDP, TCP fournit : une livraison fiable, un ordre garanti des messages, une gestion des retransmissions
+
+Ces propriétés sont nécessaires pour les opérations applicatives plus importantes. (passer une commande de pizza)
+
+1. Établissement de la connexion
+
+La communication commence par un handshake TCP classique en trois étapes :
+
+- SYN
+
+- SYN-ACK
+
+- ACK
+
+Une fois la connexion établie, un canal fiable est disponible entre les deux nœuds.
+
+2. Échange de commandes
+- le client envoie une commande
+
+- le serveur traite la requête
+
+- le serveur renvoie une réponse ou des données
+
+Les messages peuvent contenir :
+
+- des commandes applicatives
+
+- des résultats de traitement
+
+- des transferts de données plus volumineux
+
+Cette phase correspond à la production ou exécution effective des tâches du système: fournir la liste des recettes, passer une commande de pizza.
+
+## Format des données des requêtes
+
+- **Phase 1** Les données échangées entre agents (annonces, pings, pongs, etc.) sont des données binaires encodées en Base64. 
+- !!binary est un tag YAML qui indique que la valeur suivante représente des données binaires encodées en Base64
+```json
+  data: !!binary |
+  oWhBbm5vdW5jZaVpbm9kZV9hZGRy...
+```
+- **Phase 2** Les données échangées sont **sérialisées en CBOR** (*Concise Binary Object Representation*) avant d’être envoyées sur le réseau.
+
+    - **Binaire et compact** : les objets applicatifs sont encodés en binaire, ce qui réduit la taille des paquets par rapport à un JSON texte.
+    - **Efficace** : l’encodage/décodage est rapide, ce qui limite la surcharge côté client et côté serveur.
+    - **Typé** : CBOR gère nativement des types riches (entiers, chaînes, tableaux, objets, tags, etc.), ce qui permet de préserver la structure des messages.
+
+Concrètement, au lieu d’envoyer un corps de requête en JSON (`{"clé": "valeur"}`), chaque agent envoie l’équivalent **encodé en CBOR**.  
+Les extraits JSON ci‑dessous sont donc une **représentation lisible** de la charge utile CBOR décodée (par exemple via Wireshark), pas le contenu exact transporté sur le fil.
+
