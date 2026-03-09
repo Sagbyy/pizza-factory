@@ -229,14 +229,19 @@ Ce port identifie la session TCP et permet au serveur de gérer plusieurs connex
 
   - ```json
      8000 → 58695  Len=251
+     data: !!binary |
+      oXJyZWNpcGVfbGlzdF9hbnN3ZXKhZ3JlY2lwZXOlZkZ1bmdoaaFlbG9jYWyhb21pc3NpbmdfYWN0aW9uc4FsQWRkTXVzaHJvb21zak1hcmdoZXJpdGGhZWxvY2FsoW9taXNzaW5nX2FjdGlvbnOBaEFkZEJhc2lsaE1hcmluYXJhoWVsb2NhbKFvbWlzc2luZ19hY3Rpb25zgmlBZGRHYXJsaWNqQWRkT3JlZ2Fub2lQZXBwZXJvbmmhZWxvY2FsoW9taXNzaW5nX2FjdGlvbnOAb1F1YXR0cm9Gb3JtYWdnaaFlbG9jYWyhb21pc3NpbmdfYWN0aW9uc4A=
     ```
   Le serveur envoie ici 251 octets au client.
-  Ces données sont encodées sous forme binaire structurée. La réponse contient : iste des recettes
+  Ces données sont encodées sous forme binaire structurée. La réponse après décodage Base64 : 
+
+```rrecipe_list_answergrecipesfFunghielocalomissing_actionslAddMushroomsjMargheritaelocalomissing_actionshAddBasilhMarinaraelocalomissing_actionsiAddGarlicjAddOreganoiPepperonielocalomissing_actionsoQuattroFormaggielocalomissing_actions```
 
 - Fermeture de la session TCP
 
   - ```json
      58695 → 8000 [FIN, ACK]
+    
     ```
   Le client envoie un message FIN, indiquant qu’il souhaite terminer la communication. 
   Le serveur accuse réception, et la session TCP est ensuite fermée.
