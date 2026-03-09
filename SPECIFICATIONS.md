@@ -175,7 +175,80 @@ Pareil le deuxième répond et lui renvoie un ping ainsi de suite afin de garant
     }
 }
 ```
+Lancement d'un client, qui se connecte au premier agent :
+```bash
+./pizza_factory client --peer 127.0.0.1:8000 list-recipes
+```
+Lorsqu’un client se connecte au service TCP sur le port 8000, le système d’exploitation attribue automatiquement un port éphémère côté client (par exemple 58695).
+Ce port identifie la session TCP et permet au serveur de gérer plusieurs connexions simultanées.
 
+- Établissement de la connexion TCP
+
+  - ```json
+    25 58695 → 8000  [SYN]
+  
+    26 8000  → 58695 [SYN, ACK]
+
+    27 58695 → 8000  [ACK]
+    ```
+    Il s’agit du handshake TCP classique en trois étapes (three-way handshake), utilisé pour établir une connexion fiable entre deux machines.
+    
+    Le client utilise l’adresse 127.0.0.1 avec un port éphémère 58695. Le serveur écoute sur l’adresse 127.0.0.1 au port 8000
+
+- Première commande TCP
+ 
+  - ```json
+    58695 → 8000  [PSH, ACK] Len=4
+    
+    data: !!binary |
+    AAAADQ==
+    ```
+    Cela annonce la taille du message suivant : 4 octets.
+    Après décodage Base64 : 00 00 00 0D
+
+
+- Envoi du payload de la commande
+
+  - ```json
+      58695 → 8000 [PSH, ACK] Len=13
+      data: !!binary |
+      bGxpc3RfcmVjaXBlcw==
+      ```
+    Après décodage Base64 : list_recipes. Cette chaîne correspond directement à la commande envoyée par le client
+
+
+- Réponse du serveur sur la taille de la réponse 
+
+  - ```json
+     8000 → 58695 [PSH, ACK] Len=4
+    ```
+    La réponse suivante fera 251 octets.
+
+ 
+- Transfert de données plus important: payload de la réponse
+
+  - ```json
+     8000 → 58695  Len=251
+    ```
+  Le serveur envoie ici 251 octets au client.
+  Ces données sont encodées sous forme binaire structurée. La réponse contient : iste des recettes
+
+- Fermeture de la session TCP
+
+  - ```json
+     58695 → 8000 [FIN, ACK]
+    ```
+  Le client envoie un message FIN, indiquant qu’il souhaite terminer la communication. 
+  Le serveur accuse réception, et la session TCP est ensuite fermée.
+
+
+- Certaines trames observées correspondent uniquement à des accusés de réception TCP. 
+Ces paquets ne contiennent aucun payload applicatif et sont générés automatiquement 
+par la pile TCP afin de garantir 
+la fiabilité de la transmission. 
+```json
+  58695 → 8000 [ACK]
+```
 ## Spécification du protocole observé
 
 L’analyse des captures réseau montre que le système repose sur une architecture distribuée de type peer-to-peer, utilisant deux mécanismes complémentaires :
@@ -267,7 +340,8 @@ Cette phase correspond à la production ou exécution effective des tâches du s
 ## Format des données des requêtes
 
 - **Phase 1** Les données échangées entre agents (annonces, pings, pongs, etc.) sont des données binaires encodées en Base64. 
-- !!binary est un tag YAML qui indique que la valeur suivante représente des données binaires encodées en Base64
+
+!!binary est un tag YAML qui indique que la valeur suivante représente des données binaires encodées en Base64
 ```json
   data: !!binary |
   oWhBbm5vdW5jZaVpbm9kZV9hZGRy...
