@@ -29,7 +29,7 @@ Voici les en‑têtes des paquets échangés entre les deux agents, vus dans Wir
 La capture réseau complète utilisée pour cet exemple est disponible dans le dépôt :
 
 - [`starting-peer-annouced.pcap`](./doc/pcap/starting-peer-annouced.pcap)
-
+![img_1.png](img_1.png)
 #### Annonce initiale du nœud A vers le nœud B
 
 ```bash
@@ -175,10 +175,13 @@ Pareil le deuxième répond et lui renvoie un ping ainsi de suite afin de garant
     }
 }
 ```
+#### 2.1 Commande list-recipes
 Lancement d'un client, qui se connecte au premier agent :
 ```bash
 ./pizza_factory client --peer 127.0.0.1:8000 list-recipes
 ```
+![img.png](img.png)
+![img_2.png](img_2.png)
 Lorsqu’un client se connecte au service TCP sur le port 8000, le système d’exploitation attribue automatiquement un port éphémère côté client (par exemple 58695).
 Ce port identifie la session TCP et permet au serveur de gérer plusieurs connexions simultanées.
 
@@ -205,6 +208,7 @@ Ce port identifie la session TCP et permet au serveur de gérer plusieurs connex
     ```
     Cela annonce la taille du message suivant : 4 octets.
     Après décodage Base64 : 00 00 00 0D
+
 
 
 - Envoi du payload de la commande
@@ -293,6 +297,160 @@ la fiabilité de la transmission.
 ```json
   58695 → 8000 [ACK]
 ```
+#### 2.2 Commande order Pepperoni
+Lancement d'un client, qui se connecte au premier agent :
+```bash
+./pizza_factory client --peer 127.0.0.1:8002 order Pepperoni
+```
+![img_4.png](img_4.png)
+
+- Le client envoie une commande de type order pour la recette Pepperoni.
+ ```json
+  data: !!binary |
+  oWVvcmRlcqFrcmVjaXBlX25hbWVpUGVwcGVyb25p
+  ```
+CBOR décodé: 
+```json
+{
+  "order": {
+    "recipe_name": "Pepperoni"
+  }
+}
+  ```
+- Le serveur renvoie un accusé de réception avec un identifiant unique de commande.
+ ```json
+ data: !!binary |
+oW1vcmRlcl9yZWNlaXB0oWhvcmRlcl9pZNgleCQ0NTQ3YzAyOC0zNGU3LTRmMDAtOTdkYi05M2Ey
+OGY4NmZjNmQ=
+  ```
+CBOR décodé:
+```json
+{
+  "order_receipt": {
+    "order_id": {
+      "tag": 37,
+      "value": "4547c028-34e7-4f00-97db-93a28f86fc6d"
+    }
+  }
+}
+  ```
+- Réponse complète du serveur: Le paquet 174 contient un objet CBOR de type completed_order, qui inclut le nom de la recette ainsi qu’un champ result. Ce champ semble contenir une chaîne JSON sérialisée décrivant le résultat final de la commande, notamment l’identifiant, le contenu produit, les mises à jour d’exécution, 
+les transferts entre nœuds et la livraison finale.
+  CBOR décodé:
+```json
+{
+  "completed_order": {
+    "recipe_name": "Pepperoni",
+    "result": "{\"order_id\":{\"@@TAGGED@@\":[37,\"4547c028-34e7-4f00-97db-93a28f86fc6d\"]}, ... }"
+  }
+}
+  ```
+JSON contenu dans result. Il ne décrit pas seulement la pizza finale. 
+Il raconte aussi le déroulé de traitement de la commande.
+
+L’objet contient quatre grandes parties :
+```json
+{
+  "content": "...",
+  "order_id": ...,
+  "order_timestamp": ...,
+  "updates": [ ... ]
+}
+  ```
+```json
+{
+  "order_id": {
+    "@@TAGGED@@": [37, "4547c028-34e7-4f00-97db-93a28f86fc6d"]
+  },
+  "order_timestamp": 1773512862252857,
+  "content": "Dough + Base(tomato): ready\nCheese x2\nPepperoni slices x12\nBaked(6)\n",
+  "updates": [
+    {
+      "Forward": {
+        "to": {
+          "@@TAGGED@@": [260, "127.0.0.1:8000"]
+        },
+        "timestamp": 1773512862253448
+      }
+    },
+    {
+      "Action": {
+        "action": {
+          "name": "MakeDough",
+          "params": {}
+        },
+        "timestamp": 1773512862254178
+      }
+    },
+    {
+      "Forward": {
+        "to": {
+          "@@TAGGED@@": [260, "127.0.0.1:8002"]
+        },
+        "timestamp": 1773512862254919
+      }
+    },
+    {
+      "Action": {
+        "action": {
+          "name": "AddBase",
+          "params": {
+            "base_type": "tomato"
+          }
+        },
+        "timestamp": 1773512862268636
+      }
+    },
+    {
+      "Action": {
+        "action": {
+          "name": "AddCheese",
+          "params": {
+            "amount": "2"
+          }
+        },
+        "timestamp": 1773512862284697
+      }
+    },
+    {
+      "Action": {
+        "action": {
+          "name": "AddPepperoni",
+          "params": {
+            "slices": "12"
+          }
+        },
+        "timestamp": 1773512862300510
+      }
+    },
+    {
+      "Action": {
+        "action": {
+          "name": "Bake",
+          "params": {
+            "duration": "6"
+          }
+        },
+        "timestamp": 1773512862302050
+      }
+    },
+    {
+      "Forward": {
+        "to": {
+          "@@TAGGED@@": [260, "127.0.0.1:8002"]
+        },
+        "timestamp": 1773512862303197
+      }
+    },
+    {
+      "Deliver": {
+        "timestamp": 1773512862303923
+      }
+    }
+  ]
+}
+  ```
+
 ## Spécification du protocole observé
 
 L’analyse des captures réseau montre que le système repose sur une architecture distribuée de type peer-to-peer, utilisant deux mécanismes complémentaires :
