@@ -214,7 +214,7 @@ Ce port identifie la session TCP et permet au serveur de gérer plusieurs connex
       data: !!binary |
       bGxpc3RfcmVjaXBlcw==
       ```
-    Après décodage Base64 : list_recipes. Cette chaîne correspond directement à la commande envoyée par le client
+    Après décodage CBOR : "list_recipes". Cette chaîne correspond directement à la commande envoyée par le client
 
 
 - Réponse du serveur sur la taille de la réponse 
@@ -233,9 +233,48 @@ Ce port identifie la session TCP et permet au serveur de gérer plusieurs connex
       oXJyZWNpcGVfbGlzdF9hbnN3ZXKhZ3JlY2lwZXOlZkZ1bmdoaaFlbG9jYWyhb21pc3NpbmdfYWN0aW9uc4FsQWRkTXVzaHJvb21zak1hcmdoZXJpdGGhZWxvY2FsoW9taXNzaW5nX2FjdGlvbnOBaEFkZEJhc2lsaE1hcmluYXJhoWVsb2NhbKFvbWlzc2luZ19hY3Rpb25zgmlBZGRHYXJsaWNqQWRkT3JlZ2Fub2lQZXBwZXJvbmmhZWxvY2FsoW9taXNzaW5nX2FjdGlvbnOAb1F1YXR0cm9Gb3JtYWdnaaFlbG9jYWyhb21pc3NpbmdfYWN0aW9uc4A=
     ```
   Le serveur envoie ici 251 octets au client.
-  Ces données sont encodées sous forme binaire structurée. La réponse après décodage Base64 : 
+  Ces données sont encodées sous forme binaire structurée. La réponse après décodage CBOR : 
 
-```rrecipe_list_answergrecipesfFunghielocalomissing_actionslAddMushroomsjMargheritaelocalomissing_actionshAddBasilhMarinaraelocalomissing_actionsiAddGarlicjAddOreganoiPepperonielocalomissing_actionsoQuattroFormaggielocalomissing_actions```
+```
+{
+    "recipe_list_answer": {
+        "recipes": {
+            "Funghi": {
+                "local": {
+                    "missing_actions": [
+                        "AddMushrooms"
+                    ]
+                }
+            },
+            "Margherita": {
+                "local": {
+                    "missing_actions": [
+                        "AddBasil"
+                    ]
+                }
+            },
+            "Marinara": {
+                "local": {
+                    "missing_actions": [
+                        "AddGarlic",
+                        "AddOregano"
+                    ]
+                }
+            },
+            "Pepperoni": {
+                "local": {
+                    "missing_actions": []
+                }
+            },
+            "QuattroFormaggi": {
+                "local": {
+                    "missing_actions": []
+                }
+            }
+        }
+    }
+}
+```
 
 - Fermeture de la session TCP
 
@@ -344,14 +383,7 @@ Cette phase correspond à la production ou exécution effective des tâches du s
 
 ## Format des données des requêtes
 
-- **Phase 1** Les données échangées entre agents (annonces, pings, pongs, etc.) sont des données binaires encodées en Base64. 
-
-!!binary est un tag YAML qui indique que la valeur suivante représente des données binaires encodées en Base64
-```json
-  data: !!binary |
-  oWhBbm5vdW5jZaVpbm9kZV9hZGRy...
-```
-- **Phase 2** Les données échangées sont **sérialisées en CBOR** (*Concise Binary Object Representation*) avant d’être envoyées sur le réseau.
+ Les données échangées sont **sérialisées en CBOR** (*Concise Binary Object Representation*) avant d’être envoyées sur le réseau.
 
     - **Binaire et compact** : les objets applicatifs sont encodés en binaire, ce qui réduit la taille des paquets par rapport à un JSON texte.
     - **Efficace** : l’encodage/décodage est rapide, ce qui limite la surcharge côté client et côté serveur.
