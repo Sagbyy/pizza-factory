@@ -1,0 +1,36 @@
+Funghi =
+    MakeDough
+    -> AddBase(base_type=tomato)
+    -> AddMushrooms(amount=3)
+    -> AddCheese(amount=2)
+    -> Bake(duration=6)
+    -> AddOliveOil
+
+Pepperoni =
+    MakeDough
+    -> AddBase(base_type=tomato)
+    -> AddCheese(amount=2)
+    -> AddPepperoni(slices=12)
+    -> Bake(duration=6)
+
+Marinara =
+    MakeDough
+    -> AddBase(base_type=tomato)
+    -> AddGarlic(cloves=2)
+    -> AddOregano(amount=1)
+    -> Bake(duration=5)
+    -> AddOliveOil
+
+Margherita =
+    MakeDough
+    -> AddBase(base_type=tomato)
+    -> [AddCheese(amount=2), AddBasil(leaves=3)]
+    -> Bake(duration=5)
+    -> AddOliveOil
+
+QuattroFormaggi =
+    MakeDough
+    -> AddBase(base_type=cream)
+    -> AddCheese(amount=1)^4
+    -> Bake(duration=6)
+    -> AddOliveOil

@@ -4,7 +4,7 @@ Dans cet exemple, nous démarrons une chaîne minimale de deux agents qui vont :
 
 1. S’annoncer mutuellement (messages `Announce`).
 2. Se découvrir et échanger leurs capacités/recettes.
-3. Se surveiller en continu via des messages `Ping` / `Pong`.
+3. Se surveiller en continu via des messages `Ping` / `Pong`. Les deux nœuds émettent leur propre Ping périodiquement, et l’autre répond par Pong
 
 ### 1. Démarrage des deux agents
 
@@ -12,7 +12,6 @@ Lancement du premier agent (nœud A) :
 ```bash
 ./pizza_factory start --host 127.0.0.1:8000 --capabilities MakeDough --recipes-file recipes/examples.recipes --debug
 ```
-
 Lancement du deuxième agent (nœud B), qui se connecte au premier :
 ```bash
 ./pizza_factory start --host 127.0.0.1:8002 --capabilities AddBase,AddCheese,AddPepperoni,Bake,AddOliveOil --peer 127.0.0.1:8000 --debug
@@ -29,7 +28,7 @@ Voici les en‑têtes des paquets échangés entre les deux agents, vus dans Wir
 La capture réseau complète utilisée pour cet exemple est disponible dans le dépôt :
 
 - [`starting-peer-annouced.pcap`](./doc/pcap/starting-peer-annouced.pcap)
-![img_1.png](img_1.png)
+![img_1.png](screenshots/img_1.png)
 #### Annonce initiale du nœud A vers le nœud B
 
 ```bash
@@ -181,9 +180,12 @@ Lancement d'un client, qui se connecte au premier agent :
 ./pizza_factory client --peer 127.0.0.1:8000 list-recipes
 ```
 ![img.png](img.png)
-![img_2.png](img_2.png)
+![img_2.png](screenshots/img_2.png)
 Lorsqu’un client se connecte au service TCP sur le port 8000, le système d’exploitation attribue automatiquement un port éphémère côté client (par exemple 58695).
 Ce port identifie la session TCP et permet au serveur de gérer plusieurs connexions simultanées.
+
+![img_5.png](screenshots/img_5.png)
+
 
 - Établissement de la connexion TCP
 
@@ -302,7 +304,10 @@ Lancement d'un client, qui se connecte au premier agent :
 ```bash
 ./pizza_factory client --peer 127.0.0.1:8002 order Pepperoni
 ```
-![img_4.png](img_4.png)
+![img_4.png](screenshots/img_4.png)
+
+![img_6.png](screenshots/img_6.png)
+
 
 - Le client envoie une commande de type order pour la recette Pepperoni.
  ```json
@@ -334,8 +339,39 @@ CBOR décodé:
   }
 }
   ```
-- Réponse complète du serveur: Le paquet 174 contient un objet CBOR de type completed_order, qui inclut le nom de la recette ainsi qu’un champ result. Ce champ semble contenir une chaîne JSON sérialisée décrivant le résultat final de la commande, notamment l’identifiant, le contenu produit, les mises à jour d’exécution, 
-les transferts entre nœuds et la livraison finale.
+- Une connexion TCP est établie vers l’agent 127.0.0.1:8000.
+![img_7.png](screenshots/img_7.png)
+![img_8.png](screenshots/img_8.png)
+ L’émetteur envoie d’abord un entier de longueur sur 4 octets, suivi d’un message CBOR get_recipe contenant le champ recipe_name = Pepperoni. L’agent 8000 répond avec un message CBOR recipe_answer contenant le champ recipe, 
+qui transporte la recette complète sous forme textuelle.
+
+CBOR décodé de la requête :
+```json
+{
+  "get_recipe": {
+    "recipe_name": "Pepperoni"
+  }
+}
+  ```
+CBOR décodé de la réponse :
+```json
+{
+  "recipe_answer": {
+    "recipe": "Pepperoni = MakeDough -> AddBase(base_type=tomato) -> AddCheese(amount=2) -> AddPepperoni(slices=12) -> Bake(duration=6)"
+  }
+}
+  ```
+Le port source 56300 ne permet pas, à lui seul, d’affirmer avec certitude absolue que c’est 8002 et pas le client.
+
+- Réponse complète du serveur: Le paquet 174 contient un objet CBOR de type completed_order, qui inclut le nom de la recette ainsi qu’un champ result. 
+Ce champ semble contenir une chaîne JSON sérialisée décrivant le résultat final de la commande, notamment
+  - l’identifiant, 
+  - le contenu produit, 
+  - les transferts entre nœuds qui font les mises à jour d’exécution (updates). L'analyse du champ "updates" permet d'affirmer que l'agent sur le port 8002 récupère d’abord la recette via un message TCP get_recipe envoyé à 127.0.0.1:8000,
+    puis exécute le traitement sous forme d’étapes successives transportées par des messages process_payload. Les messages observés montrent une progression de action_index et un enrichissement progressif de content et updates,
+    ce qui indique une délégation de certaines actions à l’agent distant avant reprise du traitement local.
+  - la livraison finale.
+
   CBOR décodé:
 ```json
 {
@@ -345,10 +381,8 @@ les transferts entre nœuds et la livraison finale.
   }
 }
   ```
-JSON contenu dans result. Il ne décrit pas seulement la pizza finale. 
-Il raconte aussi le déroulé de traitement de la commande.
 
-L’objet contient quatre grandes parties :
+L’objet dans "result" contient quatre grandes parties :
 ```json
 {
   "content": "...",
