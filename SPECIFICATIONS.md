@@ -179,7 +179,7 @@ Lancement d'un client, qui se connecte au premier agent :
 ```bash
 ./pizza_factory client --peer 127.0.0.1:8000 list-recipes
 ```
-![img.png](img.png)
+![img.png](screenshots/img.png)
 ![img_2.png](screenshots/img_2.png)
 Lorsqu’un client se connecte au service TCP sur le port 8000, le système d’exploitation attribue automatiquement un port éphémère côté client (par exemple 58695).
 Ce port identifie la session TCP et permet au serveur de gérer plusieurs connexions simultanées.
@@ -341,10 +341,13 @@ CBOR décodé:
   ```
 - Une connexion TCP est établie vers l’agent 127.0.0.1:8000.
 ![img_7.png](screenshots/img_7.png)
-![img_8.png](screenshots/img_8.png)
- L’émetteur envoie d’abord un entier de longueur sur 4 octets, suivi d’un message CBOR get_recipe contenant le champ recipe_name = Pepperoni. L’agent 8000 répond avec un message CBOR recipe_answer contenant le champ recipe, 
-qui transporte la recette complète sous forme textuelle.
 
+
+Lorsqu’un client envoie une commande Pepperoni à l’agent 127.0.0.1:8002, l’agent 127.0.0.1:8000 intervient de deux façons:
+![img_1.png](screenshots/img_9.png)
+  - L’émetteur envoie d’abord un entier de longueur sur 4 octets, suivi d’un message CBOR get_recipe contenant le champ recipe_name = Pepperoni. L’agent 8000 répond avec un message CBOR recipe_answer contenant le champ recipe, 
+qui transporte la recette complète sous forme textuelle (l'agent 8000 répond à une requête GetRecipe)
+    ![img_8.png](screenshots/img_8.png)
 CBOR décodé de la requête :
 ```json
 {
@@ -361,7 +364,313 @@ CBOR décodé de la réponse :
   }
 }
   ```
-Le port source 56300 ne permet pas, à lui seul, d’affirmer avec certitude absolue que c’est 8002 et pas le client.
+  - Ensuite, il reçoit un message ProcessPayload, exécute localement l’action MakeDough, 
+puis transmet la suite du traitement à 127.0.0.1:8002 pour l’action suivante AddBase. 
+Cela montre que l’exécution d’une commande peut être distribuée entre agents, avec transfert explicite du contexte d’exécution.
+    ![img.png](screenshots/img_10.png)
+    ![img_1.png](screenshots/img_11.png)
+
+CBOR décodé de ProcessPayload 56301 -> 8002:
+```json
+{
+  "process_payload": {
+    "payload": {
+      "order_id": {
+        "tag": 37,
+        "value": "6a8100fd-738a-4628-8232-8b78e5aade67"
+      },
+      "order_timestamp": 1773599028742680,
+      "delivery_host": {
+        "tag": 260,
+        "value": "127.0.0.1:8002"
+      },
+      "action_index": 0,
+      "action_sequence": [
+        {
+          "name": "MakeDough",
+          "params": {}
+        },
+        {
+          "name": "AddBase",
+          "params": {
+            "base_type": "tomato"
+          }
+        },
+        {
+          "name": "AddCheese",
+          "params": {
+            "amount": "2"
+          }
+        },
+        {
+          "name": "AddPepperoni",
+          "params": {
+            "slices": "12"
+          }
+        },
+        {
+          "name": "Bake",
+          "params": {
+            "duration": "6"
+          }
+        }
+      ],
+      "content": "",
+      "updates": []
+    }
+  }
+}
+  ```
+CBOR décodé de ProcessPayload 56302 -> 8000: ce stream sert à demander à 8000 d’exécuter la première étape.
+L’historique updates indique déjà un Forward vers 8000
+![img.png](screenshots/img12.png)
+```json
+{
+  "process_payload": {
+    "payload": {
+      "order_id": {
+        "tag": 37,
+        "value": "6a8100fd-738a-4628-8232-8b78e5aade67"
+      },
+      "order_timestamp": 1773599028742680,
+      "delivery_host": {
+        "tag": 260,
+        "value": "127.0.0.1:8002"
+      },
+      "action_index": 0,
+      "action_sequence": [
+        {
+          "name": "MakeDough",
+          "params": {}
+        },
+        {
+          "name": "AddBase",
+          "params": {
+            "base_type": "tomato"
+          }
+        },
+        {
+          "name": "AddCheese",
+          "params": {
+            "amount": "2"
+          }
+        },
+        {
+          "name": "AddPepperoni",
+          "params": {
+            "slices": "12"
+          }
+        },
+        {
+          "name": "Bake",
+          "params": {
+            "duration": "6"
+          }
+        }
+      ],
+      "content": "",
+      "updates": [
+        {
+          "Forward": {
+            "to": {
+              "tag": 260,
+              "value": "127.0.0.1:8000"
+            },
+            "timestamp": 1773599028758515
+          }
+        }
+      ]
+    }
+  }
+}
+  ```
+CBOR décodé de ProcessPayload 56303 -> 8000: payload mis à jour après l’exécution de MakeDough. L’état a avancé : action_index passe de 0 à 1
+;content contient maintenant Dough: ready; les updates enregistrent que MakeDough a été exécuté.
+![img.png](screenshots/img13.png)
+```json
+{
+  "process_payload": {
+    "payload": {
+      "action_index": 1,
+      "content": "Dough: ready\n",
+      "updates": [
+        {
+          "Forward": {
+            "to": {
+              "tag": 260,
+              "value": "127.0.0.1:8000"
+            },
+            "timestamp": 1773599028758515
+          }
+        },
+        {
+          "Action": {
+            "action": {
+              "name": "MakeDough",
+              "params": {}
+            },
+            "timestamp": 1773599028760016
+          }
+        }
+      ]
+    }
+  }
+}
+  ```
+CBOR décodé de ProcessPayload 56304 -> 8002: après avoir constaté que l’étape suivante est AddBase, 8000 forwarde donc le payload mis à jour vers 8002
+![img.png](screenshots/img14.png)
+```json
+{
+  "process_payload": {
+    "payload": {
+      "action_index": 1,
+      "content": "Dough: ready\n",
+      "updates": [
+        {
+          "Forward": {
+            "to": {
+              "tag": 260,
+              "value": "127.0.0.1:8000"
+            },
+            "timestamp": 1773599028758515
+          }
+        },
+        {
+          "Action": {
+            "action": {
+              "name": "MakeDough",
+              "params": {}
+            },
+            "timestamp": 1773599028760016
+          }
+        },
+        {
+          "Forward": {
+            "to": {
+              "tag": 260,
+              "value": "127.0.0.1:8002"
+            },
+            "timestamp": 1773599028761316
+          }
+        }
+      ]
+    }
+  }
+}
+  ```
+CBOR décodé de ProcessPayload 56305 -> 8002: 8002 exécute AddBase, met à jour content.
+![img.png](screenshots/img15.png)
+```json
+{
+  "process_payload": {
+    "payload": {
+      "content": "Dough + Base(tomato): ready\n",
+      "updates": [
+        {
+          "Forward": {
+            "to": {
+              "tag": 260,
+              "value": "127.0.0.1:8000"
+            },
+            "timestamp": 1773599028758515
+          }
+        },
+        {
+          "Action": {
+            "action": {
+              "name": "MakeDough",
+              "params": {}
+            },
+            "timestamp": 1773599028760016
+          }
+        },
+        {
+          "Forward": {
+            "to": {
+              "tag": 260,
+              "value": "127.0.0.1:8002"
+            },
+            "timestamp": 1773599028761316
+          }
+        },
+        {
+          "Action": {
+            "action": {
+              "name": "AddBase",
+              "params": {
+                "base_type": "tomato"
+              }
+            },
+            "timestamp": 1773599028762356
+          }
+        }
+      ]
+    }
+  }
+}
+  ```
+8002 continue ainsi avec AddCheese:
+```json
+{
+  "process_payload": {
+    "payload": {
+      "content": "Dough + Base(tomato): ready\nCheese x2\n",
+      "updates": [
+        {
+          "Forward": {
+            "to": {
+              "tag": 260,
+              "value": "127.0.0.1:8000"
+            },
+            "timestamp": 1773599028758515
+          }
+        },
+        {
+          "Action": {
+            "action": {
+              "name": "MakeDough",
+              "params": {}
+            },
+            "timestamp": 1773599028760016
+          }
+        },
+        {
+          "Forward": {
+            "to": {
+              "tag": 260,
+              "value": "127.0.0.1:8002"
+            },
+            "timestamp": 1773599028761316
+          }
+        },
+        {
+          "Action": {
+            "action": {
+              "name": "AddBase",
+              "params": {
+                "base_type": "tomato"
+              }
+            },
+            "timestamp": 1773599028762356
+          }
+        },
+        {
+          "Action": {
+            "action": {
+              "name": "AddCheese",
+              "params": {
+                "amount": "2"
+              }
+            },
+            "timestamp": 1773599028763201
+          }
+        }
+      ]
+    }
+  }
+}
+```
+et AddPepperonni + Bake.
 
 - Réponse complète du serveur: Le paquet 174 contient un objet CBOR de type completed_order, qui inclut le nom de la recette ainsi qu’un champ result. 
 Ce champ semble contenir une chaîne JSON sérialisée décrivant le résultat final de la commande, notamment
