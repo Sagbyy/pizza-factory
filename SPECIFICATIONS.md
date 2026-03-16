@@ -184,8 +184,6 @@ Lancement d'un client, qui se connecte au premier agent :
 Lorsqu’un client se connecte au service TCP sur le port 8000, le système d’exploitation attribue automatiquement un port éphémère côté client (par exemple 58695).
 Ce port identifie la session TCP et permet au serveur de gérer plusieurs connexions simultanées.
 
-![img_5.png](screenshots/img_5.png)
-
 - Établissement de la connexion TCP
 
   - ```json
@@ -298,6 +296,10 @@ la fiabilité de la transmission.
 ```json
   58695 → 8000 [ACK]
 ```
+Résumé:
+
+![img_5.png](screenshots/img_5.png)
+
 #### 2.2 Commande order Pepperoni
 Lancement d'un client, qui se connecte au premier agent :
 ```bash
