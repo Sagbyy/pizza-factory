@@ -186,7 +186,6 @@ Ce port identifie la session TCP et permet au serveur de gérer plusieurs connex
 
 ![img_5.png](screenshots/img_5.png)
 
-
 - Établissement de la connexion TCP
 
   - ```json
@@ -304,11 +303,7 @@ Lancement d'un client, qui se connecte au premier agent :
 ```bash
 ./pizza_factory client --peer 127.0.0.1:8002 order Pepperoni
 ```
-![img_4.png](screenshots/img_4.png)
-
-![img_6.png](screenshots/img_6.png)
-
-
+![img.png](screenshots/img18.png)
 - Le client envoie une commande de type order pour la recette Pepperoni.
  ```json
   data: !!binary |
@@ -325,8 +320,8 @@ CBOR décodé:
 - Le serveur renvoie un accusé de réception avec un identifiant unique de commande.
  ```json
  data: !!binary |
-oW1vcmRlcl9yZWNlaXB0oWhvcmRlcl9pZNgleCQ0NTQ3YzAyOC0zNGU3LTRmMDAtOTdkYi05M2Ey
-OGY4NmZjNmQ=
+oW1vcmRlcl9yZWNlaXB0oWhvcmRlcl9pZNgleCQ2YTgxMDBmZC03MzhhLTQ2MjgtODIzMi04Yjc4
+ZTVhYWRlNjc=
   ```
 CBOR décodé:
 ```json
@@ -334,7 +329,7 @@ CBOR décodé:
   "order_receipt": {
     "order_id": {
       "tag": 37,
-      "value": "4547c028-34e7-4f00-97db-93a28f86fc6d"
+      "value": "6a8100fd-738a-4628-8232-8b78e5aade67"
     }
   }
 }
@@ -793,7 +788,26 @@ L’objet dans "result" contient quatre grandes parties :
   ]
 }
   ```
+Résumé: 
 
+client → 8002 : order("Pepperoni")
+
+8002 → client : order_receipt(order_id)
+
+8002 → 8000 : get_recipe("Pepperoni")
+
+8000 → 8002 : recipe_answer(recipe=...)
+
+8002 construit le process_payload initial
+
+8002 → 8000 : délégation de MakeDough
+
+8000 → 8002 : retour d’un process_payload mis à jour
+
+8002 continue AddBase, AddCheese, AddPepperoni, Bake
+
+8002 → client : completed_order(...)
+![img.png](screenshots/img17.png)
 ## Spécification du protocole observé
 
 L’analyse des captures réseau montre que le système repose sur une architecture distribuée de type peer-to-peer, utilisant deux mécanismes complémentaires :
