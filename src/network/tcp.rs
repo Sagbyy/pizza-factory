@@ -1,14 +1,14 @@
-use std::io::{self, Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::io::{Result, Read, Write};
+use std::net::TcpStream;
 
-pub fn write_frame(stream: &mut TcpStream, payload: &[u8]) -> io::Result<()> {
+pub fn write_frame(stream: &mut TcpStream, payload: &[u8]) -> Result<()> {
     let len = payload.len() as u32;
     stream.write_all(&len.to_be_bytes())?;
     stream.write_all(payload)?;
     Ok(())
 }
 
-pub fn read_frame(stream: &mut TcpStream) -> io::Result<Vec<u8>> {
+pub fn read_frame(stream: &mut TcpStream) -> Result<Vec<u8>> {
     let mut len_buf = [0u8; 4];
     stream.read_exact(&mut len_buf)?;
     let len = u32::from_be_bytes(len_buf) as usize;
@@ -21,6 +21,7 @@ pub fn read_frame(stream: &mut TcpStream) -> io::Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::TcpListener;
     use std::thread;
 
     #[test]
