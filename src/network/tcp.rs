@@ -1,4 +1,4 @@
-use std::io::{Result, Read, Write};
+use std::io::{Read, Result, Write};
 use std::net::TcpStream;
 
 pub fn write_frame(stream: &mut TcpStream, payload: &[u8]) -> Result<()> {

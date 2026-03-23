@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use std::io::Cursor;
 use uuid::Uuid;
 
-
 pub const UUID: u64 = 37;
 pub const ADDR: u64 = 260;
 pub const LAST_SEEN: u64 = 1001;
@@ -149,7 +148,9 @@ pub fn to_cbor<T: Serialize>(value: &T) -> Result<Vec<u8>, ciborium::ser::Error<
     Ok(out)
 }
 
-pub fn from_cbor<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, ciborium::de::Error<std::io::Error>> {
+pub fn from_cbor<T: DeserializeOwned>(
+    bytes: &[u8],
+) -> Result<T, ciborium::de::Error<std::io::Error>> {
     let cursor = Cursor::new(bytes);
     ciborium::de::from_reader(cursor)
 }
