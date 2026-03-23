@@ -1,18 +1,15 @@
-use clap::Parser;
+pub mod start;
+pub mod start_tui;
+pub mod command;
+pub mod client;
 
+use clap::Parser;
+use command::Commands;
 #[derive(Parser)]
 #[command(name = "pizza-factory")]
 #[command(about = "Decentralized Pizza Factory")]
 #[command(version = "1.0")]
-pub struct Args {
-    host: String,
-    port: u16,
-    recipe: String,
-    action: String,
-    content: String,
-}
-
-pub fn parse_args() -> Args {
-    let args = Args::parse();
-    args
+pub struct Cli {
+    #[command(subcommand)]
+    pub command: Commands,
 }

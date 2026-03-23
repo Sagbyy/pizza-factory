@@ -2,10 +2,11 @@ mod cli;
 mod network;
 mod protocol;
 
-use crate::cli::parse_args;
+use clap::Parser;
+use cli::Cli;
 
 fn main() {
-    let args = parse_args();
+    let cli = Cli::parse();
 
-    println!("Hello, world!");
+    println!("{:?}", cli.command);
 }
