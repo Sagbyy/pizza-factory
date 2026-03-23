@@ -1,6 +1,7 @@
 mod cli;
 mod network;
 mod protocol;
+mod recipe;
 
 use clap::Parser;
 use cli::Cli;
