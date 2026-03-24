@@ -1,0 +1,13 @@
+  # Start a node
+  cargo run -- start --host 127.0.0.1:8000 --capabilities MakeDough --recipes-file src/recipes/examples.recipes
+
+  # Start with TUI
+  cargo run -- start-tui --host 127.0.0.1:8000 --capabilities MakeDough
+
+  # List capabilities
+  cargo run -- list-capabilities
+
+  # Client commands
+  cargo run -- client --peer 127.0.0.1:8000 list-recipes
+  cargo run -- client --peer 127.0.0.1:8002 order Pepperoni
+  cargo run -- client --peer 127.0.0.1:8000 get-recipe Pepperoni
