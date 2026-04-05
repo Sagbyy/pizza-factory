@@ -2,6 +2,7 @@
 
 mod cli;
 mod network;
+mod node;
 mod protocol;
 mod recipe;
 
