@@ -5,6 +5,9 @@ mod network;
 mod node;
 mod protocol;
 mod recipe;
+mod server;
+
+use std::sync::Arc;
 
 use clap::Parser;
 use cli::Cli;
@@ -16,7 +19,7 @@ fn main() {
 
     match cli.command {
         Commands::Start(args) => {
-            let _state = match node::NodeState::new(&args) {
+            let state = match node::NodeState::new(&args) {
                 Ok(s) => s,
                 Err(e) => {
                     eprintln!("PizzaFactory failed: {e}");
@@ -26,7 +29,17 @@ fn main() {
                     std::process::exit(1);
                 }
             };
+
+            let tcp_handle = match server::tcp::start(Arc::clone(&state)) {
+                Ok(h) => h,
+                Err(e) => {
+                    eprintln!("PizzaFactory failed: Failed to start TCP server on {}: {e}", args.host);
+                    std::process::exit(1);
+                }
+            };
+
             println!("Starting server on {}...", args.host);
+            tcp_handle.join().unwrap();
         }
         Commands::StartTui(args) => {
             println!("Starting TUI server on {:?}...", args);
