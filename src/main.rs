@@ -16,7 +16,17 @@ fn main() {
 
     match cli.command {
         Commands::Start(args) => {
-            println!("Starting server on {:?}...", args);
+            let _state = match node::NodeState::new(&args) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("PizzaFactory failed: {e}");
+                    if let Some(cause) = std::error::Error::source(&e) {
+                        eprintln!("\nCaused by:\n    {cause}");
+                    }
+                    std::process::exit(1);
+                }
+            };
+            println!("Starting server on {}...", args.host);
         }
         Commands::StartTui(args) => {
             println!("Starting TUI server on {:?}...", args);
