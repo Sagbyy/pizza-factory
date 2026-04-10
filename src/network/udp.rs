@@ -168,6 +168,48 @@ pub fn send_initial_announces(
     Ok(sent)
 }
 
+pub fn run_gossip_steps(
+    socket: &UdpSocket,
+    state: &mut GossipState,
+    peers: &[String],
+    steps: usize,
+) -> Result<()> {
+    send_initial_announces(socket, state, peers)?;
+
+    for _ in 0..steps {
+        process_one_datagram(socket, state)?;
+    }
+
+    Ok(())
+}
+
+pub fn run_gossip_service(
+    socket: &UdpSocket,
+    state: &mut GossipState,
+    peers: &[String],
+) -> Result<()> {
+    send_initial_announces(socket, state, peers)?;
+
+    loop {
+        process_one_datagram(socket, state)?;
+    }
+}
+
+pub fn send_ping_to_known_peers(socket: &UdpSocket, state: &GossipState) -> Result<usize> {
+    let ping = build_ping(state);
+    let mut sent = 0usize;
+
+    for peer_addr in state.peers.keys() {
+        if peer_addr == &state.self_addr {
+            continue;
+        }
+        send_udp_message(socket, &ping, peer_addr)?;
+        sent += 1;
+    }
+
+    Ok(sent)
+}
+
 fn message_version_counter(message: &UdpMessage) -> u64 {
     match message {
         UdpMessage::Announce(announce) => announce.version.counter,
@@ -459,6 +501,44 @@ mod tests {
     }
 
     #[test]
+    fn send_ping_to_known_peers_sends_ping_to_all_neighbors() {
+        let receiver_a = UdpSocket::bind("127.0.0.1:0").unwrap();
+        receiver_a
+            .set_read_timeout(Some(std::time::Duration::from_millis(200)))
+            .unwrap();
+        let addr_a = receiver_a.local_addr().unwrap();
+
+        let receiver_b = UdpSocket::bind("127.0.0.1:0").unwrap();
+        receiver_b
+            .set_read_timeout(Some(std::time::Duration::from_millis(200)))
+            .unwrap();
+        let addr_b = receiver_b.local_addr().unwrap();
+
+        let sender = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let sender_addr = sender.local_addr().unwrap();
+
+        let mut state = GossipState::new(
+            sender_addr.to_string(),
+            vec!["MakeDough".to_string()],
+            vec![],
+        );
+        state.peers.insert(addr_a.to_string(), now_secs());
+        state.peers.insert(addr_b.to_string(), now_secs());
+
+        let sent = send_ping_to_known_peers(&sender, &state).unwrap();
+        assert_eq!(sent, 2);
+
+        let (bytes_a, from_a) = recv_datagram(&receiver_a).unwrap();
+        let (bytes_b, from_b) = recv_datagram(&receiver_b).unwrap();
+
+        assert_eq!(from_a, sender_addr);
+        assert_eq!(from_b, sender_addr);
+
+        assert!(matches!(decode_udp_message(&bytes_a).unwrap(), UdpMessage::Ping(_)));
+        assert!(matches!(decode_udp_message(&bytes_b).unwrap(), UdpMessage::Ping(_)));
+    }
+
+    #[test]
     fn send_initial_announces_sends_announce_to_peers() {
         let receiver = UdpSocket::bind("127.0.0.1:0").unwrap();
         receiver
@@ -490,6 +570,40 @@ mod tests {
             }
             _ => panic!("expected Announce message"),
         }
+    }
+
+    #[test]
+    fn run_gossip_steps_processes_one_ping_and_replies_with_pong() {
+        let service_socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let service_addr = service_socket.local_addr().unwrap();
+
+        let peer_socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+        peer_socket
+            .set_read_timeout(Some(std::time::Duration::from_millis(200)))
+            .unwrap();
+
+        let mut state = GossipState::new(
+            service_addr.to_string(),
+            vec!["MakeDough".to_string()],
+            vec![],
+        );
+
+        let ping = UdpMessage::Ping(Check {
+            last_seen: Tagged::last_seen(HashMap::new()),
+            version: Version {
+                counter: state.version.counter + 1,
+                generation: state.version.generation + 1,
+            },
+        });
+
+        send_udp_message(&peer_socket, &ping, &service_addr.to_string()).unwrap();
+
+        let no_peers: Vec<String> = Vec::new();
+        run_gossip_steps(&service_socket, &mut state, &no_peers, 1).unwrap();
+
+        let (reply_bytes, _) = recv_datagram(&peer_socket).unwrap();
+        let reply = decode_udp_message(&reply_bytes).unwrap();
+        assert!(matches!(reply, UdpMessage::Pong(_)));
     }
 
     #[test]
