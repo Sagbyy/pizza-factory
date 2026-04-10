@@ -109,6 +109,14 @@ pub fn build_pong(state: &GossipState) -> UdpMessage {
     })
 }
 
+pub fn apply_check(state: &mut GossipState, peer_addr: &str, check: &Check) {
+    mark_peer_seen(state, peer_addr);
+
+    if is_newer_version(&check.version, &state.version) {
+        state.version = check.version.clone();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -257,6 +265,51 @@ mod tests {
             }
             _ => panic!("expected Pong message"),
         }
+    }
+
+    #[test]
+    fn apply_check_updates_version_when_newer() {
+        let mut state = GossipState::new(
+            "127.0.0.1:8000".to_string(),
+            vec!["MakeDough".to_string()],
+            vec![],
+        );
+
+        let check = Check {
+            last_seen: Tagged::last_seen(HashMap::new()),
+            version: Version {
+                counter: state.version.counter + 1,
+                generation: state.version.generation + 1,
+            },
+        };
+
+        apply_check(&mut state, "127.0.0.1:8002", &check);
+
+        assert!(state.peers.contains_key("127.0.0.1:8002"));
+        assert_eq!(state.version, check.version);
+    }
+
+    #[test]
+    fn apply_check_keeps_version_when_older() {
+        let mut state = GossipState::new(
+            "127.0.0.1:8000".to_string(),
+            vec!["MakeDough".to_string()],
+            vec![],
+        );
+        let original_version = state.version.clone();
+
+        let check = Check {
+            last_seen: Tagged::last_seen(HashMap::new()),
+            version: Version {
+                counter: 0,
+                generation: original_version.generation.saturating_sub(1),
+            },
+        };
+
+        apply_check(&mut state, "127.0.0.1:8002", &check);
+
+        assert!(state.peers.contains_key("127.0.0.1:8002"));
+        assert_eq!(state.version, original_version);
     }
 
     #[test]
