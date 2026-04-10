@@ -149,6 +149,25 @@ pub fn process_one_datagram(socket: &UdpSocket, state: &mut GossipState) -> Resu
     Ok(message)
 }
 
+pub fn send_initial_announces(
+    socket: &UdpSocket,
+    state: &GossipState,
+    peers: &[String],
+) -> Result<usize> {
+    let announce = build_announce(state, peers.to_vec());
+    let mut sent = 0usize;
+
+    for peer in peers {
+        if peer == &state.self_addr {
+            continue;
+        }
+        send_udp_message(socket, &announce, peer)?;
+        sent += 1;
+    }
+
+    Ok(sent)
+}
+
 fn message_version_counter(message: &UdpMessage) -> u64 {
     match message {
         UdpMessage::Announce(announce) => announce.version.counter,
@@ -437,6 +456,40 @@ mod tests {
         let (reply_bytes, _) = recv_datagram(&peer_socket).unwrap();
         let reply = decode_udp_message(&reply_bytes).unwrap();
         assert!(matches!(reply, UdpMessage::Pong(_)));
+    }
+
+    #[test]
+    fn send_initial_announces_sends_announce_to_peers() {
+        let receiver = UdpSocket::bind("127.0.0.1:0").unwrap();
+        receiver
+            .set_read_timeout(Some(std::time::Duration::from_millis(200)))
+            .unwrap();
+        let receiver_addr = receiver.local_addr().unwrap();
+
+        let sender = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let sender_addr = sender.local_addr().unwrap();
+
+        let state = GossipState::new(
+            sender_addr.to_string(),
+            vec!["MakeDough".to_string()],
+            vec!["Margherita".to_string()],
+        );
+
+        let peers = vec![receiver_addr.to_string()];
+        let sent = send_initial_announces(&sender, &state, &peers).unwrap();
+        assert_eq!(sent, 1);
+
+        let (bytes, from) = recv_datagram(&receiver).unwrap();
+        let message = decode_udp_message(&bytes).unwrap();
+
+        assert_eq!(from, sender_addr);
+        match message {
+            UdpMessage::Announce(announce) => {
+                assert_eq!(announce.node_addr, Tagged::addr(sender_addr.to_string()));
+                assert!(announce.capabilities.contains(&"MakeDough".to_string()));
+            }
+            _ => panic!("expected Announce message"),
+        }
     }
 
     #[test]
