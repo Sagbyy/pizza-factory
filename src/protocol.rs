@@ -203,10 +203,10 @@ mod tests {
     }
 
     #[test]
-    fn Check_roundtrip() {
+    fn check_roundtrip() {
         let mut last_seen_map = HashMap::new();
         last_seen_map.insert("127.0.0.1:8002".to_string(), 1_773_591_739);
-        let Check = Check {
+        let check: Check = Check {
             last_seen: Tagged::last_seen(last_seen_map),
             version: Version {
                 counter: 1,
@@ -214,8 +214,8 @@ mod tests {
             },
         };
 
-        let encoded = to_cbor(&Check).unwrap();
+        let encoded = to_cbor(&check).unwrap();
         let decoded: Check = from_cbor(&encoded).unwrap();
-        assert_eq!(decoded, Check);
+        assert_eq!(decoded, check);
     }
 }
