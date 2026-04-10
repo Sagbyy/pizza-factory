@@ -138,6 +138,17 @@ pub fn handle_udp_message(
     }
 }
 
+pub fn process_one_datagram(socket: &UdpSocket, state: &mut GossipState) -> Result<UdpMessage> {
+    let (bytes, from) = recv_datagram(socket)?;
+    let message = decode_udp_message(&bytes)?;
+
+    if let Some(reply) = handle_udp_message(state, &from.to_string(), &message) {
+        send_udp_message(socket, &reply, &from.to_string())?;
+    }
+
+    Ok(message)
+}
+
 fn message_version_counter(message: &UdpMessage) -> u64 {
     match message {
         UdpMessage::Announce(announce) => announce.version.counter,
@@ -392,6 +403,40 @@ mod tests {
             }
             _ => panic!("expected Pong response"),
         }
+    }
+
+    #[test]
+    fn process_one_datagram_receives_ping_and_sends_pong() {
+        let service_socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let service_addr = service_socket.local_addr().unwrap();
+
+        let peer_socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+        peer_socket
+            .set_read_timeout(Some(std::time::Duration::from_millis(200)))
+            .unwrap();
+
+        let mut state = GossipState::new(
+            service_addr.to_string(),
+            vec!["MakeDough".to_string()],
+            vec![],
+        );
+
+        let ping = UdpMessage::Ping(Check {
+            last_seen: Tagged::last_seen(HashMap::new()),
+            version: Version {
+                counter: state.version.counter + 1,
+                generation: state.version.generation + 1,
+            },
+        });
+
+        send_udp_message(&peer_socket, &ping, &service_addr.to_string()).unwrap();
+
+        let received = process_one_datagram(&service_socket, &mut state).unwrap();
+        assert_eq!(received, ping);
+
+        let (reply_bytes, _) = recv_datagram(&peer_socket).unwrap();
+        let reply = decode_udp_message(&reply_bytes).unwrap();
+        assert!(matches!(reply, UdpMessage::Pong(_)));
     }
 
     #[test]
