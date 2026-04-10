@@ -3,7 +3,7 @@ use std::io::Result;
 use std::net::{SocketAddr, UdpSocket};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::protocol::{from_cbor, to_cbor, Announce, Tagged, UdpMessage, Version};
+use crate::protocol::{Announce, Check, Tagged, UdpMessage, Version, from_cbor, to_cbor};
 
 #[derive(Debug, Clone)]
 pub struct GossipState {
@@ -85,10 +85,34 @@ pub fn is_newer_version(candidate: &Version, current: &Version) -> bool {
     (candidate.generation, candidate.counter) > (current.generation, current.counter)
 }
 
+pub fn mark_peer_seen(state: &mut GossipState, peer_addr: &str) {
+    state.peers.insert(peer_addr.to_string(), now_secs());
+}
+
+pub fn build_ping(state: &GossipState) -> UdpMessage {
+    let mut last_seen = HashMap::new();
+    last_seen.insert(state.self_addr.clone(), now_secs());
+
+    UdpMessage::Ping(Check {
+        last_seen: Tagged::last_seen(last_seen),
+        version: state.version.clone(),
+    })
+}
+
+pub fn build_pong(state: &GossipState) -> UdpMessage {
+    let mut last_seen = HashMap::new();
+    last_seen.insert(state.self_addr.clone(), now_secs());
+
+    UdpMessage::Pong(Check {
+        last_seen: Tagged::last_seen(last_seen),
+        version: state.version.clone(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::{Check, Tagged, Version};
+    use crate::protocol::{Tagged, Version};
     use std::collections::HashMap;
 
     #[test]
@@ -182,6 +206,57 @@ mod tests {
 
         assert!(state.peers.contains_key("127.0.0.1:8002"));
         assert_eq!(state.version, announce.version);
+    }
+
+    #[test]
+    fn mark_peer_seen_updates_presence_map() {
+        let mut state = GossipState::new(
+            "127.0.0.1:8000".to_string(),
+            vec!["MakeDough".to_string()],
+            vec![],
+        );
+
+        mark_peer_seen(&mut state, "127.0.0.1:8002");
+
+        assert!(state.peers.contains_key("127.0.0.1:8002"));
+    }
+
+    #[test]
+    fn build_ping_contains_local_version_and_last_seen() {
+        let state = GossipState::new(
+            "127.0.0.1:8000".to_string(),
+            vec!["MakeDough".to_string()],
+            vec![],
+        );
+
+        let message = build_ping(&state);
+
+        match message {
+            UdpMessage::Ping(check) => {
+                assert_eq!(check.version, state.version);
+                assert!(check.last_seen.value.contains_key("127.0.0.1:8000"));
+            }
+            _ => panic!("expected Ping message"),
+        }
+    }
+
+    #[test]
+    fn build_pong_contains_local_version_and_last_seen() {
+        let state = GossipState::new(
+            "127.0.0.1:8000".to_string(),
+            vec!["MakeDough".to_string()],
+            vec![],
+        );
+
+        let message = build_pong(&state);
+
+        match message {
+            UdpMessage::Pong(check) => {
+                assert_eq!(check.version, state.version);
+                assert!(check.last_seen.value.contains_key("127.0.0.1:8000"));
+            }
+            _ => panic!("expected Pong message"),
+        }
     }
 
     #[test]
