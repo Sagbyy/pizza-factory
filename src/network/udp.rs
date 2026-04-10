@@ -117,6 +117,34 @@ pub fn apply_check(state: &mut GossipState, peer_addr: &str, check: &Check) {
     }
 }
 
+pub fn handle_udp_message(
+    state: &mut GossipState,
+    peer_addr: &str,
+    message: &UdpMessage,
+) -> Option<UdpMessage> {
+    match message {
+        UdpMessage::Announce(announce) => {
+            apply_announce(state, announce);
+            None
+        }
+        UdpMessage::Ping(check) => {
+            apply_check(state, peer_addr, check);
+            Some(build_pong(state))
+        }
+        UdpMessage::Pong(check) => {
+            apply_check(state, peer_addr, check);
+            None
+        }
+    }
+}
+
+fn message_version_counter(message: &UdpMessage) -> u64 {
+    match message {
+        UdpMessage::Announce(announce) => announce.version.counter,
+        UdpMessage::Ping(check) | UdpMessage::Pong(check) => check.version.counter,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -310,6 +338,60 @@ mod tests {
 
         assert!(state.peers.contains_key("127.0.0.1:8002"));
         assert_eq!(state.version, original_version);
+    }
+
+    #[test]
+    fn handle_udp_message_updates_state_on_announce() {
+        let mut state = GossipState::new(
+            "127.0.0.1:8000".to_string(),
+            vec!["MakeDough".to_string()],
+            vec![],
+        );
+
+        let message = UdpMessage::Announce(Announce {
+            node_addr: Tagged::addr("127.0.0.1:8002"),
+            capabilities: vec!["AddCheese".to_string()],
+            recipes: vec![],
+            peers: vec![Tagged::addr("127.0.0.1:8000")],
+            version: Version {
+                counter: state.version.counter + 1,
+                generation: state.version.generation + 1,
+            },
+        });
+
+        let response = handle_udp_message(&mut state, "127.0.0.1:8002", &message);
+
+        assert!(response.is_none());
+        assert!(state.peers.contains_key("127.0.0.1:8002"));
+        assert_eq!(state.version.counter, message_version_counter(&message));
+    }
+
+    #[test]
+    fn handle_udp_message_responds_to_ping_with_pong() {
+        let mut state = GossipState::new(
+            "127.0.0.1:8000".to_string(),
+            vec!["MakeDough".to_string()],
+            vec![],
+        );
+
+        let message = UdpMessage::Ping(Check {
+            last_seen: Tagged::last_seen(HashMap::new()),
+            version: Version {
+                counter: state.version.counter + 1,
+                generation: state.version.generation + 1,
+            },
+        });
+
+        let response = handle_udp_message(&mut state, "127.0.0.1:8002", &message);
+
+        assert!(state.peers.contains_key("127.0.0.1:8002"));
+        match response {
+            Some(UdpMessage::Pong(check)) => {
+                assert_eq!(check.version, state.version);
+                assert!(check.last_seen.value.contains_key("127.0.0.1:8000"));
+            }
+            _ => panic!("expected Pong response"),
+        }
     }
 
     #[test]
