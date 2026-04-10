@@ -71,6 +71,20 @@ pub fn build_announce(state: &GossipState, peers: Vec<String>) -> UdpMessage {
     })
 }
 
+pub fn apply_announce(state: &mut GossipState, announce: &Announce) {
+    state
+        .peers
+        .insert(announce.node_addr.value.clone(), now_secs());
+
+    if is_newer_version(&announce.version, &state.version) {
+        state.version = announce.version.clone();
+    }
+}
+
+pub fn is_newer_version(candidate: &Version, current: &Version) -> bool {
+    (candidate.generation, candidate.counter) > (current.generation, current.counter)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -143,6 +157,31 @@ mod tests {
             }
             _ => panic!("expected Announce message"),
         }
+    }
+
+    #[test]
+    fn apply_announce_updates_peer_and_version() {
+        let mut state = GossipState::new(
+            "127.0.0.1:8000".to_string(),
+            vec!["MakeDough".to_string()],
+            vec![],
+        );
+
+        let announce = Announce {
+            node_addr: Tagged::addr("127.0.0.1:8002"),
+            capabilities: vec!["AddCheese".to_string()],
+            recipes: vec![],
+            peers: vec![Tagged::addr("127.0.0.1:8000")],
+            version: Version {
+                counter: 3,
+                generation: state.version.generation + 1,
+            },
+        };
+
+        apply_announce(&mut state, &announce);
+
+        assert!(state.peers.contains_key("127.0.0.1:8002"));
+        assert_eq!(state.version, announce.version);
     }
 
     #[test]
