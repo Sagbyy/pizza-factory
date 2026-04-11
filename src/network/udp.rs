@@ -117,6 +117,28 @@ pub fn apply_check(state: &mut GossipState, peer_addr: &str, check: &Check) {
     }
 }
 
+pub fn bump_local_version(state: &mut GossipState) -> Version {
+    state.version.counter += 1;
+    state.version.clone()
+}
+
+pub fn apply_local_catalog_update(
+    state: &mut GossipState,
+    capabilities: Vec<String>,
+    recipes: Vec<String>,
+    peers: &[String],
+) -> Option<UdpMessage> {
+    if state.capabilities == capabilities && state.recipes == recipes {
+        return None;
+    }
+
+    state.capabilities = capabilities;
+    state.recipes = recipes;
+    bump_local_version(state);
+
+    Some(build_announce(state, peers.to_vec()))
+}
+
 pub fn handle_udp_message(
     state: &mut GossipState,
     peer_addr: &str,
@@ -191,10 +213,14 @@ pub fn run_gossip_service(
     send_initial_announces(socket, state, peers)?;
 
     loop {
-        process_one_datagram(socket, state)?;
+        gossip_tick(socket, state)?;
     }
 }
 
+pub fn gossip_tick(socket: &UdpSocket, state: &mut GossipState) -> Result<UdpMessage> {
+    let _ = send_ping_to_known_peers(socket, state)?;
+    process_one_datagram(socket, state)
+}
 pub fn send_ping_to_known_peers(socket: &UdpSocket, state: &GossipState) -> Result<usize> {
     let ping = build_ping(state);
     let mut sent = 0usize;
@@ -248,6 +274,44 @@ mod tests {
         let (data, from) = recv_datagram(&receiver).unwrap();
         assert_eq!(data, b"ping");
         assert_eq!(from, sender_addr);
+    }
+
+    #[test]
+    fn gossip_tick_sends_ping_and_processes_incoming_message() {
+        let service_socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let service_addr = service_socket.local_addr().unwrap();
+
+        let peer_socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+        peer_socket
+            .set_read_timeout(Some(std::time::Duration::from_millis(200)))
+            .unwrap();
+        let peer_addr = peer_socket.local_addr().unwrap();
+
+        let mut state = GossipState::new(
+            service_addr.to_string(),
+            vec!["MakeDough".to_string()],
+            vec![],
+        );
+        state.peers.insert(peer_addr.to_string(), now_secs());
+
+        let ping = UdpMessage::Ping(Check {
+            last_seen: Tagged::last_seen(HashMap::new()),
+            version: Version {
+                counter: state.version.counter + 1,
+                generation: state.version.generation + 1,
+            },
+        });
+
+        send_udp_message(&peer_socket, &ping, &service_addr.to_string()).unwrap();
+
+        let received = gossip_tick(&service_socket, &mut state).unwrap();
+        assert_eq!(received, ping);
+
+        let (bytes, from) = recv_datagram(&peer_socket).unwrap();
+        let reply = decode_udp_message(&bytes).unwrap();
+
+        assert_eq!(from, service_addr);
+        assert!(matches!(reply, UdpMessage::Ping(_)));
     }
 
     #[test]
@@ -413,6 +477,60 @@ mod tests {
     }
 
     #[test]
+    fn bump_local_version_increments_counter() {
+        let mut state = GossipState::new(
+            "127.0.0.1:8000".to_string(),
+            vec!["MakeDough".to_string()],
+            vec![],
+        );
+        let original_generation = state.version.generation;
+
+        let new_version = bump_local_version(&mut state);
+
+        assert_eq!(new_version.counter, 2);
+        assert_eq!(state.version.counter, 2);
+        assert_eq!(state.version.generation, original_generation);
+    }
+
+    #[test]
+    fn apply_local_catalog_update_returns_announce_when_changed() {
+        let mut state = GossipState::new(
+            "127.0.0.1:8000".to_string(),
+            vec!["MakeDough".to_string()],
+            vec!["Margherita".to_string()],
+        );
+
+        let result = apply_local_catalog_update(
+            &mut state,
+            vec!["MakeDough".to_string(), "AddCheese".to_string()],
+            vec!["Margherita".to_string(), "Pepperoni".to_string()],
+            &vec!["127.0.0.1:8002".to_string()],
+        );
+
+        assert!(matches!(result, Some(UdpMessage::Announce(_))));
+        assert_eq!(state.version.counter, 2);
+    }
+
+    #[test]
+    fn apply_local_catalog_update_returns_none_when_unchanged() {
+        let mut state = GossipState::new(
+            "127.0.0.1:8000".to_string(),
+            vec!["MakeDough".to_string()],
+            vec!["Margherita".to_string()],
+        );
+
+        let result = apply_local_catalog_update(
+            &mut state,
+            vec!["MakeDough".to_string()],
+            vec!["Margherita".to_string()],
+            &vec!["127.0.0.1:8002".to_string()],
+        );
+
+        assert!(result.is_none());
+        assert_eq!(state.version.counter, 1);
+    }
+
+    #[test]
     fn handle_udp_message_updates_state_on_announce() {
         let mut state = GossipState::new(
             "127.0.0.1:8000".to_string(),
@@ -534,8 +652,14 @@ mod tests {
         assert_eq!(from_a, sender_addr);
         assert_eq!(from_b, sender_addr);
 
-        assert!(matches!(decode_udp_message(&bytes_a).unwrap(), UdpMessage::Ping(_)));
-        assert!(matches!(decode_udp_message(&bytes_b).unwrap(), UdpMessage::Ping(_)));
+        assert!(matches!(
+            decode_udp_message(&bytes_a).unwrap(),
+            UdpMessage::Ping(_)
+        ));
+        assert!(matches!(
+            decode_udp_message(&bytes_b).unwrap(),
+            UdpMessage::Ping(_)
+        ));
     }
 
     #[test]
