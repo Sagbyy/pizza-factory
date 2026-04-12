@@ -1,9 +1,10 @@
-use clap::Subcommand;
+use crate::cli::client::ClientArgs;
 use crate::cli::start::StartArgs;
 use crate::cli::start_tui::StartTuiArgs;
-use crate::cli::client::ClientArgs;
+use clap::Subcommand;
 
 #[derive(Subcommand, Debug)]
+/// Top-level commands exposed by the Pizza Factory CLI.
 pub enum Commands {
     #[command(about = "Start server as a console service")]
     Start(StartArgs),

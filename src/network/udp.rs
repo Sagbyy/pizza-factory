@@ -7,6 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::node::{NodeState, PeerInfo};
 use crate::protocol::{Announce, Check, Tagged, UdpMessage, Version, from_cbor, to_cbor};
 
+/// Returns the current Unix timestamp in seconds.
 pub fn now_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -21,11 +22,13 @@ fn now_micros() -> u64 {
         .as_micros() as u64
 }
 
+/// Sends a raw UDP datagram to a target address.
 pub fn send_datagram(socket: &UdpSocket, payload: &[u8], target: &str) -> Result<()> {
     socket.send_to(payload, target)?;
     Ok(())
 }
 
+/// Receives one UDP datagram and returns `(payload, source_addr)`.
 pub fn recv_datagram(socket: &UdpSocket) -> Result<(Vec<u8>, SocketAddr)> {
     let mut buf = vec![0u8; 65535];
     let (len, addr) = socket.recv_from(&mut buf)?;
@@ -33,23 +36,31 @@ pub fn recv_datagram(socket: &UdpSocket) -> Result<(Vec<u8>, SocketAddr)> {
     Ok((buf, addr))
 }
 
+/// Encodes a UDP protocol message into CBOR bytes.
 pub fn encode_udp_message(message: &UdpMessage) -> Result<Vec<u8>> {
     to_cbor(message).map_err(std::io::Error::other)
 }
 
+/// Decodes a CBOR payload into a UDP protocol message.
 pub fn decode_udp_message(bytes: &[u8]) -> Result<UdpMessage> {
     from_cbor(bytes).map_err(std::io::Error::other)
 }
 
+/// Encodes and sends a UDP protocol message to a target address.
 pub fn send_udp_message(socket: &UdpSocket, message: &UdpMessage, target: &str) -> Result<()> {
     let payload = encode_udp_message(message)?;
     send_datagram(socket, &payload, target)
 }
 
+/// Returns `true` when `candidate` is newer than `current`.
 pub fn is_newer_version(candidate: &Version, current: &Version) -> bool {
     (candidate.generation, candidate.counter) > (current.generation, current.counter)
 }
 
+/// Runs the shared UDP gossip service loop for a node.
+///
+/// Sends an initial `Announce` to bootstrap peers, then continuously executes
+/// one gossip tick per loop iteration.
 pub fn run_gossip_service_shared(
     socket: &UdpSocket,
     node_state: Arc<NodeState>,
@@ -68,6 +79,11 @@ pub fn run_gossip_service_shared(
     }
 }
 
+/// Executes one gossip iteration:
+///
+/// 1. broadcasts announces to known peers,
+/// 2. sends pings,
+/// 3. processes at most one incoming datagram.
 pub fn gossip_tick_shared(socket: &UdpSocket, node_state: &Arc<NodeState>) -> Result<UdpMessage> {
     // Send Announces to all known peers to propagate recipe/capability updates
     {
@@ -87,6 +103,9 @@ pub fn gossip_tick_shared(socket: &UdpSocket, node_state: &Arc<NodeState>) -> Re
     process_one_datagram_shared(socket, node_state)
 }
 
+/// Sends a `Ping` message to every known peer except self.
+///
+/// Returns the number of peers that were successfully targeted.
 pub fn send_ping_to_known_peers_shared(
     socket: &UdpSocket,
     node_state: &Arc<NodeState>,
@@ -109,6 +128,10 @@ pub fn send_ping_to_known_peers_shared(
     Ok(sent)
 }
 
+/// Reads and handles a single incoming UDP datagram.
+///
+/// On timeout / would-block, returns a placeholder `Pong` so the caller can
+/// continue looping without treating it as a fatal error.
 pub fn process_one_datagram_shared(
     socket: &UdpSocket,
     node_state: &Arc<NodeState>,
@@ -141,6 +164,11 @@ pub fn process_one_datagram_shared(
     }
 }
 
+/// Applies one UDP message to shared node state and optionally builds a reply.
+///
+/// - Announce` updates known peer data and does not reply.
+/// - `Ping` updates liveness/version data and returns a `Pong` reply.
+/// - `Pong` only updates liveness/version data.
 pub fn handle_udp_message_shared(
     node_state: &Arc<NodeState>,
     peer_addr: &str,
