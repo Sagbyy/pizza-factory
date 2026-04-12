@@ -135,7 +135,7 @@ pub fn handle_order(state: &NodeState, recipe_name: &str) -> TcpMessage {
     }
 
     TcpMessage::OrderDeclined {
-        message: format!("Unknown recipe '{recipe_name}'"),
+        message: "Unknown recipe".to_string(),
     }
 }
 
@@ -321,8 +321,16 @@ mod tests {
     }
 
     #[test]
-    fn handle_order_reports_candidate_peer_for_remote_recipe() {
+    fn handle_order_declines_when_recipe_unknown_or_unreachable() {
+        // Case 1: no peer knows the recipe
         let state = build_state(vec!["MakeDough"], vec![]);
+        let response = handle_order(&state, "UnknownPizza");
+        assert!(
+            matches!(response, TcpMessage::OrderDeclined { ref message } if message == "Unknown recipe"),
+            "expected OrderDeclined with 'Unknown recipe', got {response:?}"
+        );
+
+        // Case 2: a peer claims to know the recipe but is unreachable
         {
             let mut gossip = state.gossip.write().unwrap();
             gossip.peers.insert(
@@ -330,24 +338,16 @@ mod tests {
                 PeerInfo {
                     capabilities: vec!["Bake".to_string()],
                     recipes: vec!["Pepperoni".to_string()],
-                    version: Version {
-                        counter: 2,
-                        generation: 1,
-                    },
+                    version: Version { counter: 2, generation: 1 },
                     last_seen_us: 1,
                 },
             );
         }
-
         let response = handle_order(&state, "Pepperoni");
-
-        match response {
-            TcpMessage::Error { message } => {
-                assert!(message.contains("candidate peers"));
-                assert!(message.contains("127.0.0.1:8002"));
-            }
-            _ => panic!("expected Error response"),
-        }
+        assert!(
+            matches!(response, TcpMessage::OrderDeclined { ref message } if message == "Unknown recipe"),
+            "expected OrderDeclined with 'Unknown recipe', got {response:?}"
+        );
     }
 
     #[test]
