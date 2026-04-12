@@ -165,7 +165,7 @@ Possibles extensions:
 
 ## 12. Contributions individuelles
 
-- Herman: modèles de données + gossip UDP + CI.
+- Herman: modèles de données + gossip UDP + log.
 - Van Anh: Reverse-Engineering + Spec Protocole + Parseur de recette + handlers TCP.
 - Salahe-Eddine: Reverse-Engineering + Spec Protocole + client CLI.
 
