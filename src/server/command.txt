@@ -1,0 +1,5 @@
+cargo run -- start --host 127.0.0.1:8000 --capabilities MakeDough --recipes-file src/recipes/examples.recipes
+
+cargo run -- start --host 127.0.0.1:8000 --capabilities AddBase,AddCheese,AddPepperoni,Bake,AddOliveOil --recipes-file src/recipes/examples.recipes
+
+cargo run -- start --host 127.0.0.1:8002 --capabilities AddBase,AddCheese,AddPepperoni,Bake,AddOliveOil --peer 127.0.0.1:8000 --debug

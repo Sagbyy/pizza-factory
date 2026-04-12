@@ -356,6 +356,33 @@ fn split_parallel_actions(s: &str) -> Vec<String> {
 mod tests {
     use super::*;
 
+    /// Parse `$input`, unwrap, and return the `Vec<Recipe>`.
+    /// Panics at the call site on failure (via `#[track_caller]` equivalent).
+    ///
+    /// Variants:
+    ///   assert_recipe!(input)
+    ///     → just parse and unwrap
+    ///   assert_recipe!(input, name = "Foo")
+    ///     → also assert recipes[0].name
+    ///   assert_recipe!(input, name = "Foo", steps = 5)
+    ///     → also assert recipes[0].steps.len()
+    macro_rules! assert_recipe {
+        ($input:expr) => {{
+            parse_recipes($input).unwrap()
+        }};
+        ($input:expr, name = $name:expr) => {{
+            let recipes = parse_recipes($input).unwrap();
+            assert_eq!(recipes[0].name, $name);
+            recipes
+        }};
+        ($input:expr, name = $name:expr, steps = $n:expr) => {{
+            let recipes = parse_recipes($input).unwrap();
+            assert_eq!(recipes[0].name, $name);
+            assert_eq!(recipes[0].steps.len(), $n);
+            recipes
+        }};
+    }
+
     // ── parse_params ─────────────────────────────────────────────────────────
 
     #[test]
@@ -494,10 +521,8 @@ mod tests {
         // Input: Pepperoni recipe in multi-line file format
         // Output: Recipe with 5 steps, all Single
         let input = "Pepperoni =\n    MakeDough\n    -> AddBase(base_type=tomato)\n    -> AddCheese(amount=2)\n    -> AddPepperoni(slices=12)\n    -> Bake(duration=6)";
-        let recipes = parse_recipes(input).unwrap();
+        let recipes = assert_recipe!(input, name = "Pepperoni", steps = 5);
         assert_eq!(recipes.len(), 1);
-        assert_eq!(recipes[0].name, "Pepperoni");
-        assert_eq!(recipes[0].steps.len(), 5);
     }
 
     #[test]
@@ -505,9 +530,7 @@ mod tests {
         // Input: flat single-line format as sent in recipe_answer over the wire
         // Output: same Recipe as the multi-line version above — formats are equivalent
         let wire = "Pepperoni = MakeDough -> AddBase(base_type=tomato) -> AddCheese(amount=2) -> AddPepperoni(slices=12) -> Bake(duration=6)";
-        let recipes = parse_recipes(wire).unwrap();
-        assert_eq!(recipes[0].name, "Pepperoni");
-        assert_eq!(recipes[0].steps.len(), 5);
+        assert_recipe!(wire, name = "Pepperoni", steps = 5);
     }
 
     #[test]
@@ -536,8 +559,7 @@ mod tests {
         // Input: Margherita recipe block with a parallel step
         // Output: Recipe with steps including one Step::Parallel
         let input = "Margherita =\n    MakeDough\n    -> AddBase(base_type=tomato)\n    -> [AddCheese(amount=2), AddBasil(leaves=3)]\n    -> Bake(duration=5)\n    -> AddOliveOil";
-        let recipes = parse_recipes(input).unwrap();
-        assert_eq!(recipes[0].name, "Margherita");
+        let recipes = assert_recipe!(input, name = "Margherita");
         assert!(matches!(recipes[0].steps[2], Step::Parallel(_)));
     }
 
@@ -546,7 +568,7 @@ mod tests {
         // Input: QuattroFormaggi recipe block with a repeated step
         // Output: Recipe with one Step::Repeated(_, 4)
         let input = "QuattroFormaggi =\n    MakeDough\n    -> AddBase(base_type=cream)\n    -> AddCheese(amount=1)^4\n    -> Bake(duration=6)\n    -> AddOliveOil";
-        let recipes = parse_recipes(input).unwrap();
+        let recipes = assert_recipe!(input);
         assert!(matches!(recipes[0].steps[2], Step::Repeated(_, 4)));
     }
 
@@ -568,7 +590,7 @@ mod tests {
         // Input:  QuattroFormaggi (AddCheese^4)
         // Output: action_sequence contains 4 consecutive AddCheese entries
         let input = "QuattroFormaggi =\n    MakeDough\n    -> AddBase(base_type=cream)\n    -> AddCheese(amount=1)^4\n    -> Bake(duration=6)\n    -> AddOliveOil";
-        let recipes = parse_recipes(input).unwrap();
+        let recipes = assert_recipe!(input);
         let seq = flatten_recipe(&recipes[0]);
         // MakeDough, AddBase, AddCheese x4, Bake, AddOliveOil = 8
         assert_eq!(seq.len(), 8);
@@ -583,7 +605,7 @@ mod tests {
         // Input:  Margherita ([AddCheese, AddBasil])
         // Output: AddCheese and AddBasil appear as consecutive entries
         let input = "Margherita =\n    MakeDough\n    -> AddBase(base_type=tomato)\n    -> [AddCheese(amount=2), AddBasil(leaves=3)]\n    -> Bake(duration=5)\n    -> AddOliveOil";
-        let recipes = parse_recipes(input).unwrap();
+        let recipes = assert_recipe!(input);
         let seq = flatten_recipe(&recipes[0]);
         // MakeDough, AddBase, AddCheese, AddBasil, Bake, AddOliveOil = 6
         assert_eq!(seq.len(), 6);

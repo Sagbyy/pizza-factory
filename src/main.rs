@@ -2,8 +2,12 @@
 
 mod cli;
 mod network;
+mod node;
 mod protocol;
 mod recipe;
+mod server;
+
+use std::sync::Arc;
 
 use clap::Parser;
 use cli::Cli;
@@ -37,6 +41,27 @@ fn main() {
 
             run_gossip_service(&socket, &mut state, &args.peers)
                 .expect("UDP gossip service stopped unexpectedly");
+            let state = match node::NodeState::new(&args) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("PizzaFactory failed: {e}");
+                    if let Some(cause) = std::error::Error::source(&e) {
+                        eprintln!("\nCaused by:\n    {cause}");
+                    }
+                    std::process::exit(1);
+                }
+            };
+
+            let tcp_handle = match server::tcp::start(Arc::clone(&state)) {
+                Ok(h) => h,
+                Err(e) => {
+                    eprintln!("PizzaFactory failed: Failed to start TCP server on {}: {e}", args.host);
+                    std::process::exit(1);
+                }
+            };
+
+            println!("Starting server on {}...", args.host);
+            tcp_handle.join().unwrap();
         }
         Commands::StartTui(args) => {
             println!("Starting TUI server on {:?}...", args);
