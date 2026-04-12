@@ -13,7 +13,7 @@ use clap::Parser;
 use cli::Cli;
 use cli::client::ClientCommands;
 use cli::command::Commands;
-use network::udp::{GossipState, run_gossip_service};
+use network::udp::run_gossip_service_shared;
 use std::net::UdpSocket;
 use std::thread;
 
@@ -45,16 +45,16 @@ fn main() {
             };
 
             let socket = UdpSocket::bind(&args.host).expect("failed to bind UDP socket");
-            let mut gossip_state = GossipState::from_node_state(&state);
             let peers = args.peers.clone();
+            let udp_state = Arc::clone(&state);
 
             let _udp_handle = thread::spawn(move || {
                 println!(
                     "Starting UDP gossip service on {}...",
-                    gossip_state.self_addr
+                    udp_state.identity.addr
                 );
 
-                if let Err(e) = run_gossip_service(&socket, &mut gossip_state, &peers) {
+                if let Err(e) = run_gossip_service_shared(&socket, udp_state, &peers) {
                     eprintln!("UDP gossip service stopped unexpectedly: {e}");
                 }
             });

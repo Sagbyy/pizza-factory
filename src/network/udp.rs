@@ -4,7 +4,7 @@ use std::net::{SocketAddr, UdpSocket};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::node::NodeState;
+use crate::node::{NodeState, PeerInfo};
 use crate::protocol::{Announce, Check, Tagged, UdpMessage, Version, from_cbor, to_cbor};
 
 #[derive(Debug, Clone)]
@@ -29,18 +29,6 @@ impl GossipState {
             },
         }
     }
-
-    pub fn from_node_state(node: &Arc<NodeState>) -> Self {
-        Self::new(
-            node.identity.addr.clone(),
-            node.identity.capabilities.clone(),
-            node.identity
-                .recipes
-                .iter()
-                .map(|recipe| recipe.name.clone())
-                .collect(),
-        )
-    }
 }
 
 pub fn now_secs() -> u64 {
@@ -48,6 +36,13 @@ pub fn now_secs() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
+}
+
+fn now_micros() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_micros() as u64
 }
 
 pub fn send_datagram(socket: &UdpSocket, payload: &[u8], target: &str) -> Result<()> {
@@ -228,6 +223,178 @@ pub fn run_gossip_service(
 
     loop {
         gossip_tick(socket, state)?;
+    }
+}
+
+pub fn run_gossip_service_shared(
+    socket: &UdpSocket,
+    node_state: Arc<NodeState>,
+    peers: &[String],
+) -> Result<()> {
+    let announce = build_announce_from_node(&node_state, peers.to_vec());
+    for peer in peers {
+        if peer == &node_state.identity.addr {
+            continue;
+        }
+        send_udp_message(socket, &announce, peer)?;
+    }
+
+    loop {
+        gossip_tick_shared(socket, &node_state)?;
+    }
+}
+
+pub fn gossip_tick_shared(socket: &UdpSocket, node_state: &Arc<NodeState>) -> Result<UdpMessage> {
+    let _ = send_ping_to_known_peers_shared(socket, node_state)?;
+    process_one_datagram_shared(socket, node_state)
+}
+
+pub fn send_ping_to_known_peers_shared(
+    socket: &UdpSocket,
+    node_state: &Arc<NodeState>,
+) -> Result<usize> {
+    let ping = build_ping_from_node(node_state);
+    let peer_addrs: Vec<String> = {
+        let gossip = node_state.gossip.read().unwrap();
+        gossip.peers.keys().cloned().collect()
+    };
+
+    let mut sent = 0usize;
+    for peer_addr in peer_addrs {
+        if peer_addr == node_state.identity.addr {
+            continue;
+        }
+        send_udp_message(socket, &ping, &peer_addr)?;
+        sent += 1;
+    }
+
+    Ok(sent)
+}
+
+pub fn process_one_datagram_shared(
+    socket: &UdpSocket,
+    node_state: &Arc<NodeState>,
+) -> Result<UdpMessage> {
+    let (bytes, from) = recv_datagram(socket)?;
+    let message = decode_udp_message(&bytes)?;
+    let from_addr = from.to_string();
+
+    if let Some(reply) = handle_udp_message_shared(node_state, &from_addr, &message) {
+        send_udp_message(socket, &reply, &from_addr)?;
+    }
+
+    Ok(message)
+}
+
+pub fn handle_udp_message_shared(
+    node_state: &Arc<NodeState>,
+    peer_addr: &str,
+    message: &UdpMessage,
+) -> Option<UdpMessage> {
+    match message {
+        UdpMessage::Announce(announce) => {
+            apply_announce_shared(node_state, announce);
+            None
+        }
+        UdpMessage::Ping(check) => {
+            apply_check_shared(node_state, peer_addr, check);
+            Some(build_pong_from_node(node_state))
+        }
+        UdpMessage::Pong(check) => {
+            apply_check_shared(node_state, peer_addr, check);
+            None
+        }
+    }
+}
+
+fn build_announce_from_node(node_state: &Arc<NodeState>, peers: Vec<String>) -> UdpMessage {
+    let version = {
+        let gossip = node_state.gossip.read().unwrap();
+        gossip.version.clone()
+    };
+
+    UdpMessage::Announce(Announce {
+        node_addr: Tagged::addr(node_state.identity.addr.clone()),
+        capabilities: node_state.identity.capabilities.clone(),
+        recipes: node_state
+            .identity
+            .recipes
+            .iter()
+            .map(|recipe| recipe.name.clone())
+            .collect(),
+        peers: peers.into_iter().map(Tagged::addr).collect(),
+        version,
+    })
+}
+
+fn build_ping_from_node(node_state: &Arc<NodeState>) -> UdpMessage {
+    let mut last_seen = HashMap::new();
+    last_seen.insert(node_state.identity.addr.clone(), now_secs());
+
+    let version = {
+        let gossip = node_state.gossip.read().unwrap();
+        gossip.version.clone()
+    };
+
+    UdpMessage::Ping(Check {
+        last_seen: Tagged::last_seen(last_seen),
+        version,
+    })
+}
+
+fn build_pong_from_node(node_state: &Arc<NodeState>) -> UdpMessage {
+    let mut last_seen = HashMap::new();
+    last_seen.insert(node_state.identity.addr.clone(), now_secs());
+
+    let version = {
+        let gossip = node_state.gossip.read().unwrap();
+        gossip.version.clone()
+    };
+
+    UdpMessage::Pong(Check {
+        last_seen: Tagged::last_seen(last_seen),
+        version,
+    })
+}
+
+fn apply_announce_shared(node_state: &Arc<NodeState>, announce: &Announce) {
+    let mut gossip = node_state.gossip.write().unwrap();
+    let peer = gossip
+        .peers
+        .entry(announce.node_addr.value.clone())
+        .or_insert_with(PeerInfo::unknown);
+
+    peer.capabilities = announce.capabilities.clone();
+    peer.recipes = announce.recipes.clone();
+    peer.version = announce.version.clone();
+    peer.last_seen_us = now_micros();
+
+    for announced_peer in &announce.peers {
+        gossip
+            .peers
+            .entry(announced_peer.value.clone())
+            .or_insert_with(PeerInfo::unknown);
+    }
+
+    if is_newer_version(&announce.version, &gossip.version) {
+        gossip.version = announce.version.clone();
+    }
+}
+
+fn apply_check_shared(node_state: &Arc<NodeState>, peer_addr: &str, check: &Check) {
+    let mut gossip = node_state.gossip.write().unwrap();
+    let peer = gossip
+        .peers
+        .entry(peer_addr.to_string())
+        .or_insert_with(PeerInfo::unknown);
+
+    if is_newer_version(&check.version, &peer.version) {
+        peer.version = check.version.clone();
+    }
+    peer.last_seen_us = now_micros();
+
+    if is_newer_version(&check.version, &gossip.version) {
+        gossip.version = check.version.clone();
     }
 }
 
