@@ -12,11 +12,11 @@ pub fn client_list_recipes(peer: &str) -> io::Result<()> {
     stream.set_write_timeout(Some(Duration::from_secs(5)))?;
 
     let request = TcpMessage::ListRecipes;
-    let request_bytes = to_cbor(&request).map_err(|e| io::Error::other(e))?;
+    let request_bytes = to_cbor(&request).map_err(io::Error::other)?;
     write_frame(&mut stream, &request_bytes)?;
 
     let response_bytes = read_frame(&mut stream)?;
-    let response: TcpMessage = from_cbor(&response_bytes).map_err(|e| io::Error::other(e))?;
+    let response: TcpMessage = from_cbor(&response_bytes).map_err(io::Error::other)?;
 
     match response {
         TcpMessage::RecipeListAnswer { recipes } => {
@@ -59,11 +59,11 @@ pub fn client_get_recipe(peer: &str, recipe_name: &str) -> io::Result<()> {
     let request = TcpMessage::GetRecipe {
         recipe_name: recipe_name.to_string(),
     };
-    let request_bytes = to_cbor(&request).map_err(|e| io::Error::other(e))?;
+    let request_bytes = to_cbor(&request).map_err(io::Error::other)?;
     write_frame(&mut stream, &request_bytes)?;
 
     let response_bytes = read_frame(&mut stream)?;
-    let response: TcpMessage = from_cbor(&response_bytes).map_err(|e| io::Error::other(e))?;
+    let response: TcpMessage = from_cbor(&response_bytes).map_err(io::Error::other)?;
 
     match response {
         TcpMessage::RecipeAnswer { recipe } => {
@@ -89,11 +89,11 @@ pub fn client_order(peer: &str, recipe_name: &str) -> io::Result<()> {
     let request = TcpMessage::Order {
         recipe_name: recipe_name.to_string(),
     };
-    let request_bytes = to_cbor(&request).map_err(|e| io::Error::other(e))?;
+    let request_bytes = to_cbor(&request).map_err(io::Error::other)?;
     write_frame(&mut stream, &request_bytes)?;
 
     let response_bytes = read_frame(&mut stream)?;
-    let response: TcpMessage = from_cbor(&response_bytes).map_err(|e| io::Error::other(e))?;
+    let response: TcpMessage = from_cbor(&response_bytes).map_err(io::Error::other)?;
 
     match response {
         TcpMessage::OrderReceipt { order_id } => {
