@@ -11,3 +11,10 @@
   cargo run -- client --peer 127.0.0.1:8000 list-recipes
   cargo run -- client --peer 127.0.0.1:8002 order Pepperoni
   cargo run -- client --peer 127.0.0.1:8000 get-recipe Pepperoni
+
+  # Test UDP/TCP
+  T1 : cargo run -- start --host 127.0.0.1:8000 --capabilities MakeDough,Bake --recipes-file src/recipes/examples.recipes
+  T2 : cargo run -- start --host 127.0.0.1:8001 --capabilities Slice --peer 127.0.0.1:8000
+  T3 : cargo run -- client --peer 127.0.0.1:8001 list-recipes
+  T3 : cargo run -- client --peer 127.0.0.1:8001 get-recipe Margherita
+  T3 : cargo run -- client --peer 127.0.0.1:8001 order Margherita
