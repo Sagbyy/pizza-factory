@@ -1,0 +1,448 @@
+# Spécification du protocole — Pizza Factory
+
+## Vue d'ensemble
+
+Le système repose sur une architecture pair-à-pair décentralisée. Chaque agent communique via deux canaux distincts :
+
+| Canal | Transport | Rôle |
+|---|---|---|
+| Découverte | UDP | Propagation gossip (Announce, Ping, Pong) |
+| Commandes | TCP | Exécution des ordres client (list-recipes, order, ...) |
+
+Tous les messages sont sérialisés en **CBOR** (*Concise Binary Object Representation*).  
+Les exemples JSON ci-dessous sont des représentations lisibles des charges utiles CBOR décodées.
+
+---
+
+## 1. Sérialisation — CBOR et tags
+
+### 1.1 Format général
+
+Chaque charge utile réseau est un objet CBOR. Les clés de premier niveau identifient le type de message (ex. `"Announce"`, `"list_recipes"`, `"order"`).
+
+### 1.2 Tags CBOR spéciaux
+
+Trois types de valeurs utilisent un tag CBOR pour encoder leur sémantique :
+
+| Tag | Type | Usage |
+|---|---|---|
+| `37` | UUID | Identifiant unique d'une commande (`order_id`) |
+| `260` | Adresse réseau | Adresse d'un nœud (`"127.0.0.1:8000"`) |
+| `1001` | Horodatage | Carte des derniers messages reçus (`last_seen`) |
+
+Représentation fil (exemple adresse) :
+```json
+{ "tag": 260, "value": "127.0.0.1:8000" }
+```
+
+Représentation fil (exemple UUID) :
+```json
+{ "tag": 37, "value": "6a8100fd-738a-4628-8232-8b78e5aade67" }
+```
+
+---
+
+## 2. Transport UDP — Couche gossip
+
+### 2.1 Caractéristiques
+
+- Protocole sans connexion, tolérant aux pertes.
+- Chaque agent écoute et émet sur son propre port UDP.
+- Pas d'autorité centrale — la propagation est épidémique.
+
+### 2.2 Message `Announce`
+
+Émis par un agent pour s'annoncer au réseau. Déclenché au démarrage et périodiquement.
+
+```json
+{
+  "Announce": {
+    "node_addr": { "tag": 260, "value": "127.0.0.1:8000" },
+    "capabilities": ["MakeDough"],
+    "recipes": ["Pepperoni", "Margherita", "Funghi", "Marinara", "QuattroFormaggi"],
+    "peers": [
+      { "tag": 260, "value": "127.0.0.1:8002" }
+    ],
+    "version": {
+      "counter": 3,
+      "generation": 1772191739
+    }
+  }
+}
+```
+
+| Champ | Type | Description |
+|---|---|---|
+| `node_addr` | `Tagged<String>` (tag 260) | Adresse de l'agent émetteur |
+| `capabilities` | `Vec<String>` | Actions que cet agent peut exécuter |
+| `recipes` | `Vec<String>` | Noms des recettes connues (noms seuls, pas le contenu) |
+| `peers` | `Vec<Tagged<String>>` (tag 260) | Pairs connus par cet agent |
+| `version.counter` | `u64` | Compteur logique, incrémenté à chaque annonce |
+| `version.generation` | `u64` | Timestamp Unix de démarrage, distingue les redémarrages |
+
+### 2.3 Messages `Ping` / `Pong`
+
+Échangés périodiquement entre pairs pour vérifier la disponibilité (heartbeat).
+
+```json
+{
+  "Ping": {
+    "last_seen": { "tag": 1001, "value": {} },
+    "version": { "counter": 3, "generation": 1772191739 }
+  }
+}
+```
+
+```json
+{
+  "Pong": {
+    "last_seen": { "tag": 1001, "value": {} },
+    "version": { "counter": 1, "generation": 1772192016 }
+  }
+}
+```
+
+Le destinataire d'un `Ping` répond par un `Pong` avec sa propre version.  
+`last_seen` est une carte `adresse → timestamp_µs` des derniers messages reçus de chaque pair.
+
+### 2.4 Séquence de démarrage (2 nœuds)
+
+```
+Nœud A (8000)              Nœud B (8002)
+     |                           |
+     |--- Announce(A) ---------->|   A s'annonce à B
+     |<-- Announce(B) -----------|   B répond par son annonce
+     |                           |
+     |<-- Ping(B) ---------------|   B envoie un heartbeat
+     |--- Pong(A) -------------->|   A accuse réception
+     |                           |
+     |--- Ping(A) -------------->|   A envoie son heartbeat
+     |<-- Pong(B) ---------------|   B accuse réception
+     |         (cycle continu)   |
+```
+
+---
+
+## 3. Transport TCP — Couche commandes
+
+### 3.1 Caractéristiques
+
+- Connexion fiable, livrée dans l'ordre.
+- Le client ouvre une connexion TCP, envoie une commande, reçoit la réponse, puis ferme.
+- Chaque message est encadré avec un préfixe de longueur sur 4 octets.
+
+### 3.2 Tramage (framing)
+
+```
+┌─────────────────────────┬────────────────────────────────────────┐
+│  Longueur (4 octets BE) │  Charge utile CBOR (N octets)         │
+└─────────────────────────┴────────────────────────────────────────┘
+```
+
+- Les 4 premiers octets sont un entier **big-endian non signé** indiquant la taille en octets de la charge utile CBOR qui suit.
+- L'émetteur envoie d'abord les 4 octets de longueur, puis immédiatement la charge utile.
+- Le récepteur lit les 4 octets, puis lit exactement N octets de CBOR.
+
+Exemple (commande `list_recipes`) :
+```
+00 00 00 0D  →  longueur = 13 octets
+6C 6C 69 73 74 5F 72 65 63 69 70 65 73  →  CBOR de "list_recipes"
+```
+
+### 3.3 Handshake TCP
+
+Toute session commence par le three-way handshake TCP classique :
+```
+Client → Serveur : [SYN]
+Serveur → Client : [SYN, ACK]
+Client → Serveur : [ACK]
+```
+Le client ferme la connexion après réception de la réponse finale (`[FIN, ACK]`).
+
+---
+
+## 4. Messages TCP — Référence complète
+
+### 4.1 Vue d'ensemble
+
+| Message | Sens | Description |
+|---|---|---|
+| `list_recipes` | Client → Agent | Demande la liste des recettes |
+| `recipe_list_answer` | Agent → Client | Réponse avec les recettes et leur disponibilité |
+| `order` | Client → Agent | Passe une commande de pizza |
+| `order_receipt` | Agent → Client | Accusé de réception immédiat (avant traitement) |
+| `order_declined` | Agent → Client | Refus — recette inconnue |
+| `completed_order` | Agent → Client | Résultat final de la commande |
+| `get_recipe` | Agent → Agent | Demande le DSL d'une recette |
+| `recipe_answer` | Agent → Agent | Réponse avec le DSL brut |
+| `process_payload` | Agent → Agent | Transfert du contexte d'exécution |
+| `error` | Agent → Client/Agent | Erreur générique |
+
+### 4.2 `list_recipes`
+
+La charge utile CBOR est la chaîne `"list_recipes"` (pas d'objet enveloppant).
+
+```json
+"list_recipes"
+```
+
+### 4.3 `recipe_list_answer`
+
+```json
+{
+  "recipe_list_answer": {
+    "recipes": {
+      "Pepperoni": {
+        "local": { "missing_actions": [] }
+      },
+      "Funghi": {
+        "local": { "missing_actions": ["AddMushrooms"] }
+      },
+      "Margherita": {
+        "local": { "missing_actions": ["AddBasil"] }
+      }
+    }
+  }
+}
+```
+
+`missing_actions` liste les actions de la recette que cet agent ne peut pas exécuter lui-même.  
+Si la liste est vide, l'agent peut traiter la recette seul.
+
+### 4.4 `order`
+
+```json
+{
+  "order": {
+    "recipe_name": "Pepperoni"
+  }
+}
+```
+
+### 4.5 `order_receipt`
+
+Envoyé immédiatement après réception de la commande, avant toute exécution.
+
+```json
+{
+  "order_receipt": {
+    "order_id": { "tag": 37, "value": "6a8100fd-738a-4628-8232-8b78e5aade67" }
+  }
+}
+```
+
+### 4.6 `order_declined`
+
+Envoyé à la place de `order_receipt` si la recette est inconnue de l'agent et de ses pairs.
+
+```json
+{
+  "order_declined": {
+    "message": "Unknown recipe 'test'"
+  }
+}
+```
+
+Aucun `order_receipt` n'est émis dans ce cas.
+
+### 4.7 `completed_order`
+
+Envoyé par l'agent `delivery_host` au client après exécution complète.
+
+```json
+{
+  "completed_order": {
+    "recipe_name": "Pepperoni",
+    "result": "{\"order_id\": ..., \"order_timestamp\": ..., \"content\": \"...\", \"updates\": [...]}"
+  }
+}
+```
+
+Le champ `result` est une **chaîne JSON sérialisée** (pas un objet CBOR imbriqué) contenant :
+
+| Champ | Type | Description |
+|---|---|---|
+| `order_id` | Tagged UUID (tag 37) | Identifiant de la commande |
+| `order_timestamp` | `u64` (microsecondes Unix) | Horodatage de création |
+| `content` | `String` | Description lisible de la pizza produite |
+| `updates` | `Vec<Update>` | Trace d'exécution complète |
+
+### 4.8 `get_recipe` / `recipe_answer`
+
+Échange agent-à-agent. L'agent demandeur ne possède pas le fichier de recettes.
+
+```json
+{ "get_recipe": { "recipe_name": "Pepperoni" } }
+```
+
+```json
+{
+  "recipe_answer": {
+    "recipe": "Pepperoni = MakeDough -> AddBase(base_type=tomato) -> AddCheese(amount=2) -> AddPepperoni(slices=12) -> Bake(duration=6)"
+  }
+}
+```
+
+Le champ `recipe` transporte le DSL brut, exactement comme dans le fichier `.recipes`.
+
+### 4.9 `process_payload`
+
+Transporte le contexte d'exécution d'un nœud à l'autre.
+
+```json
+{
+  "process_payload": {
+    "payload": {
+      "order_id": { "tag": 37, "value": "6a8100fd-..." },
+      "order_timestamp": 1773599028742680,
+      "delivery_host": { "tag": 260, "value": "127.0.0.1:8002" },
+      "action_index": 0,
+      "action_sequence": [
+        { "name": "MakeDough", "params": {} },
+        { "name": "AddBase",   "params": { "base_type": "tomato" } },
+        { "name": "AddCheese", "params": { "amount": "2" } },
+        { "name": "AddPepperoni", "params": { "slices": "12" } },
+        { "name": "Bake",      "params": { "duration": "6" } }
+      ],
+      "content": "",
+      "updates": []
+    }
+  }
+}
+```
+
+| Champ | Description |
+|---|---|
+| `order_id` | Identifiant stable sur tous les sauts |
+| `order_timestamp` | Timestamp de création en microsecondes |
+| `delivery_host` | Agent qui détient la connexion client (destination du `completed_order`) |
+| `action_index` | Indice de la prochaine action à exécuter |
+| `action_sequence` | Séquence complète pré-aplatie depuis la recette |
+| `content` | Résultat accumulé lisible |
+| `updates` | Journal append-only des actions et transferts |
+
+---
+
+## 5. Trace d'exécution (`updates`)
+
+Chaque entrée de `updates` est un des trois variants suivants :
+
+### `Forward`
+```json
+{ "Forward": { "to": { "tag": 260, "value": "127.0.0.1:8000" }, "timestamp": 1773599028758515 } }
+```
+Enregistré par l'agent qui délègue l'action suivante à un pair.
+
+### `Action`
+```json
+{ "Action": { "action": { "name": "MakeDough", "params": {} }, "timestamp": 1773599028760016 } }
+```
+Enregistré par l'agent qui exécute effectivement l'action.
+
+### `Deliver`
+```json
+{ "Deliver": { "timestamp": 1773599028803923 } }
+```
+Enregistré une seule fois, par l'agent `delivery_host` quand toutes les actions sont terminées.
+
+---
+
+## 6. Séquences d'échange complètes
+
+### 6.1 `list-recipes`
+
+```
+Client (58695)         Agent A (8000)
+      |                      |
+      |--- [SYN] ----------->|
+      |<-- [SYN, ACK] -------|
+      |--- [ACK] ----------->|
+      |                      |
+      |--- len(13) + "list_recipes" -->|
+      |<-- len(251) + recipe_list_answer --|
+      |                      |
+      |--- [FIN, ACK] ------>|
+```
+
+### 6.2 `order` — recette connue (cas distribué : Pepperoni)
+
+```
+Client          Agent B (8002)             Agent A (8000)
+  |                   |                          |
+  |-- order(Pepperoni)->                         |
+  |<- order_receipt --|                          |
+  |                   |-- get_recipe(Pepperoni)->|
+  |                   |<- recipe_answer(DSL) ----|
+  |                   |                          |
+  |                   | construit process_payload initial
+  |                   |-- process_payload[idx=0]->| (Forward 8002→8000)
+  |                   |<- process_payload[idx=1] -| (Action MakeDough, Forward 8000→8002)
+  |                   |                          |
+  |                   | exécute AddBase, AddCheese, AddPepperoni, Bake
+  |                   |                          |
+  |<- completed_order-|                          |
+```
+
+### 6.3 `order` — recette inconnue
+
+```
+Client           Agent (port quelconque)
+  |                      |
+  |-- order("test") ---->|
+  |<- order_declined ----|   (pas d'order_receipt)
+```
+
+---
+
+## 7. Algorithme de routage (`process_payload`)
+
+```
+À réception d'un process_payload :
+  boucle :
+    action = action_sequence[action_index]
+
+    si action ∈ mes capacités :
+      exécuter l'action
+      ajouter Action{action, now} dans updates
+      ajouter la sortie à content
+      action_index++
+
+      si action_index == len(action_sequence) :
+        ajouter Deliver{now} dans updates
+        sérialiser le contexte en JSON → result
+        envoyer completed_order à delivery_host  ← FIN
+
+    sinon :
+      trouver un pair qui possède cette capacité (via gossip)
+      ajouter Forward{to: pair, now} dans updates
+      envoyer process_payload au pair  ← FIN (le pair continue)
+```
+
+---
+
+## 8. Sortie `content` par action (captures réseau)
+
+| Action | Ligne ajoutée à `content` |
+|---|---|
+| `MakeDough` | `Dough: ready\n` |
+| `AddBase(base_type=tomato)` | `Dough + Base(tomato): ready\n` |
+| `AddCheese(amount=2)` | `Cheese x2\n` |
+| `AddPepperoni(slices=12)` | `Pepperoni slices x12\n` |
+| `Bake(duration=6)` | `Baked(6)\n` |
+
+---
+
+## 9. Capacités connues
+
+| Capacité | Description |
+|---|---|
+| `MakeDough` | Préparer la pâte |
+| `AddBase` | Étaler la sauce de base |
+| `AddCheese` | Ajouter du fromage |
+| `AddPepperoni` | Ajouter du pepperoni |
+| `AddOliveOil` | Ajouter de l'huile d'olive |
+| `Bake` | Cuire la pizza |
+| `AddMushrooms` | Ajouter des champignons |
+| `AddBasil` | Ajouter du basilic |
+| `AddGarlic` | Ajouter de l'ail |
+| `AddOregano` | Ajouter de l'origan |
