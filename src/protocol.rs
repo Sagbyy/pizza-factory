@@ -109,6 +109,8 @@ pub struct RecipeStatus {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RecipeAvailability {
     pub local: RecipeStatus,
+    #[serde(default)]
+    pub remote_peers: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

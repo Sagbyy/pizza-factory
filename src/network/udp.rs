@@ -69,6 +69,20 @@ pub fn run_gossip_service_shared(
 }
 
 pub fn gossip_tick_shared(socket: &UdpSocket, node_state: &Arc<NodeState>) -> Result<UdpMessage> {
+    // Send Announces to all known peers to propagate recipe/capability updates
+    {
+        let gossip = node_state.gossip.read().unwrap();
+        let peer_addrs: Vec<String> = gossip.peers.keys().cloned().collect();
+        drop(gossip);
+
+        let announce = build_announce_from_node(node_state, peer_addrs.clone());
+        for peer_addr in peer_addrs {
+            if peer_addr != node_state.identity.addr {
+                let _ = send_udp_message(socket, &announce, &peer_addr);
+            }
+        }
+    }
+
     let _ = send_ping_to_known_peers_shared(socket, node_state)?;
     process_one_datagram_shared(socket, node_state)
 }
@@ -99,15 +113,32 @@ pub fn process_one_datagram_shared(
     socket: &UdpSocket,
     node_state: &Arc<NodeState>,
 ) -> Result<UdpMessage> {
-    let (bytes, from) = recv_datagram(socket)?;
-    let message = decode_udp_message(&bytes)?;
-    let from_addr = from.to_string();
+    match recv_datagram(socket) {
+        Ok((bytes, from)) => {
+            let message = decode_udp_message(&bytes)?;
+            let from_addr = from.to_string();
 
-    if let Some(reply) = handle_udp_message_shared(node_state, &from_addr, &message) {
-        send_udp_message(socket, &reply, &from_addr)?;
+            if let Some(reply) = handle_udp_message_shared(node_state, &from_addr, &message) {
+                send_udp_message(socket, &reply, &from_addr)?;
+            }
+
+            Ok(message)
+        }
+        Err(e)
+            if e.kind() == std::io::ErrorKind::WouldBlock
+                || e.kind() == std::io::ErrorKind::TimedOut =>
+        {
+            // Timeout or would-block: return empty Pong so the loop continues
+            Ok(UdpMessage::Pong(Check {
+                last_seen: Tagged::last_seen(HashMap::new()),
+                version: Version {
+                    counter: 0,
+                    generation: 0,
+                },
+            }))
+        }
+        Err(e) => Err(e),
     }
-
-    Ok(message)
 }
 
 pub fn handle_udp_message_shared(

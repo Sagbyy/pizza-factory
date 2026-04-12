@@ -43,6 +43,9 @@ fn main() {
             };
 
             let socket = UdpSocket::bind(&args.host).expect("failed to bind UDP socket");
+            socket
+                .set_read_timeout(Some(std::time::Duration::from_millis(500)))
+                .expect("failed to set UDP socket timeout");
             let peers = args.peers.clone();
             let udp_state = Arc::clone(&state);
 
@@ -68,13 +71,22 @@ fn main() {
         }
         Commands::Client(args) => match args.command {
             ClientCommands::Order { recipe } => {
-                println!("Ordering recipe '{}' from {}...", recipe, args.peer);
+                if let Err(e) = cli::client_impl::client_order(&args.peer, &recipe) {
+                    eprintln!("Client error: {}", e);
+                    std::process::exit(1);
+                }
             }
             ClientCommands::ListRecipes => {
-                println!("Listing recipes from {}...", args.peer);
+                if let Err(e) = cli::client_impl::client_list_recipes(&args.peer) {
+                    eprintln!("Client error: {}", e);
+                    std::process::exit(1);
+                }
             }
             ClientCommands::GetRecipe { recipe } => {
-                println!("Getting recipe '{}' from {}...", recipe, args.peer);
+                if let Err(e) = cli::client_impl::client_get_recipe(&args.peer, &recipe) {
+                    eprintln!("Client error: {}", e);
+                    std::process::exit(1);
+                }
             }
         },
     }

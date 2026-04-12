@@ -26,7 +26,7 @@ pub fn handle_list_recipes(state: &NodeState) -> TcpMessage {
         .map(String::as_str)
         .collect();
 
-    let recipes: HashMap<String, RecipeAvailability> = state
+    let mut recipes: HashMap<String, RecipeAvailability> = state
         .identity
         .recipes
         .iter()
@@ -45,10 +45,30 @@ pub fn handle_list_recipes(state: &NodeState) -> TcpMessage {
                     local: RecipeStatus {
                         missing_actions: missing,
                     },
+                    remote_peers: vec![],
                 },
             )
         })
         .collect();
+
+    // Add recipes discovered via gossip from remote peers
+    {
+        let gossip = state.gossip.read().unwrap();
+        for (peer_addr, peer_info) in &gossip.peers {
+            for recipe_name in &peer_info.recipes {
+                recipes
+                    .entry(recipe_name.clone())
+                    .or_insert_with(|| RecipeAvailability {
+                        local: RecipeStatus {
+                            missing_actions: vec![],
+                        },
+                        remote_peers: vec![],
+                    })
+                    .remote_peers
+                    .push(peer_addr.clone());
+            }
+        }
+    }
 
     TcpMessage::RecipeListAnswer { recipes }
 }
@@ -58,18 +78,35 @@ pub fn handle_list_recipes(state: &NodeState) -> TcpMessage {
 /// Used by a peer that does not hold the recipe file itself and needs to
 /// retrieve it before building the initial `ProcessPayload`.
 pub fn handle_get_recipe(state: &NodeState, recipe_name: &str) -> TcpMessage {
-    match state
+    // First check local recipes
+    if let Some(recipe) = state
         .identity
         .recipes
         .iter()
         .find(|r| r.name == recipe_name)
     {
-        Some(recipe) => TcpMessage::RecipeAnswer {
+        return TcpMessage::RecipeAnswer {
             recipe: recipe.source.clone(),
-        },
-        None => TcpMessage::Error {
-            message: format!("recipe '{recipe_name}' not found"),
-        },
+        };
+    }
+
+    // If not local, find candidate peers via gossip
+    let candidate_peers: Vec<String> = {
+        let gossip = state.gossip.read().unwrap();
+        gossip
+            .peers
+            .iter()
+            .filter(|(_, info)| info.recipes.iter().any(|r| r == recipe_name))
+            .map(|(addr, _)| addr.clone())
+            .collect()
+    };
+
+    if let Some(response) = try_forward_get_recipe(recipe_name, &candidate_peers) {
+        return response;
+    }
+
+    TcpMessage::Error {
+        message: format!("recipe '{recipe_name}' not found locally and no peer advertised it"),
     }
 }
 
@@ -201,6 +238,20 @@ fn forward_to_peer(peer: &str, message: &TcpMessage) -> Result<TcpMessage, Strin
 
 fn try_forward_order(recipe_name: &str, candidate_peers: &[String]) -> Option<TcpMessage> {
     let forwarded = TcpMessage::Order {
+        recipe_name: recipe_name.to_string(),
+    };
+
+    for peer in candidate_peers {
+        if let Ok(response) = forward_to_peer(peer, &forwarded) {
+            return Some(response);
+        }
+    }
+
+    None
+}
+
+fn try_forward_get_recipe(recipe_name: &str, candidate_peers: &[String]) -> Option<TcpMessage> {
+    let forwarded = TcpMessage::GetRecipe {
         recipe_name: recipe_name.to_string(),
     };
 

@@ -1,7 +1,8 @@
+pub mod client;
+pub mod client_impl;
+pub mod command;
 pub mod start;
 pub mod start_tui;
-pub mod command;
-pub mod client;
 
 use clap::Parser;
 use command::Commands;
