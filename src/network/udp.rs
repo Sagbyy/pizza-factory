@@ -1,8 +1,10 @@
 use std::collections::HashMap;
 use std::io::Result;
 use std::net::{SocketAddr, UdpSocket};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::node::NodeState;
 use crate::protocol::{Announce, Check, Tagged, UdpMessage, Version, from_cbor, to_cbor};
 
 #[derive(Debug, Clone)]
@@ -26,6 +28,18 @@ impl GossipState {
                 generation: now_secs(),
             },
         }
+    }
+
+    pub fn from_node_state(node: &Arc<NodeState>) -> Self {
+        Self::new(
+            node.identity.addr.clone(),
+            node.identity.capabilities.clone(),
+            node.identity
+                .recipes
+                .iter()
+                .map(|recipe| recipe.name.clone())
+                .collect(),
+        )
     }
 }
 
