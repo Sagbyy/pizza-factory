@@ -126,7 +126,7 @@ impl NodeState {
 /// The CLI accepts capabilities either as repeated flags or comma-separated:
 ///   --capabilities MakeDough
 ///   --capabilities AddBase,AddCheese,Bake
-/// Both forms arrive as Vec<String>; split on ',' to normalise.
+/// Both forms arrive as `Vec<String>`; split on ',' to normalise.
 fn parse_capabilities(raw: &[String]) -> Vec<String> {
     raw.iter()
         .flat_map(|s| s.split(','))
