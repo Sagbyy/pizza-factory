@@ -810,6 +810,28 @@ client → 8002 : order("Pepperoni")
 
 8002 → client : completed_order(...)
 ![img.png](screenshots/img17.png)
+
+Quand un client essaie de commander une pizza qui n'est pas dans la liste des recettes:
+![img.png](screenshots/img_19.png)
+
+Requête client décodée:
+```json
+{
+  "order": {
+    "recipe_name": "test"
+  }
+}
+```
+
+
+Réponse du serveur décodée:
+```json
+{
+  "order_declined": {
+    "message": "Unknown recipe"
+  }
+}
+  ```
 ## Spécification du protocole observé
 
 L’analyse des captures réseau montre que le système repose sur une architecture distribuée de type peer-to-peer, utilisant deux mécanismes complémentaires :

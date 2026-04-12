@@ -186,6 +186,9 @@ pub enum TcpMessage {
         recipe_name: String,
         result: String,
     },
+    OrderDeclined {
+        message: String,
+    },
     Error {
         message: String,
     },

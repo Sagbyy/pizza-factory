@@ -134,19 +134,8 @@ pub fn handle_order(state: &NodeState, recipe_name: &str) -> TcpMessage {
         return response;
     }
 
-    if candidate_peers.is_empty() {
-        TcpMessage::Error {
-            message: format!(
-                "recipe '{recipe_name}' not found locally and no peer advertised it yet"
-            ),
-        }
-    } else {
-        TcpMessage::Error {
-            message: format!(
-                "recipe '{recipe_name}' not local and forwarding failed; candidate peers: {}",
-                candidate_peers.join(", ")
-            ),
-        }
+    TcpMessage::OrderDeclined {
+        message: format!("Unknown recipe '{recipe_name}'"),
     }
 }
 

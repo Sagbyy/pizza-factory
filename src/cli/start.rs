@@ -38,4 +38,6 @@ pub struct StartArgs {
         help = "Delay before deleting peer"
     )]
     pub refresh_timeout: String,
+    #[arg(long, default_value = "false", help = "Enable debug logging")]
+    pub debug: bool,
 }
