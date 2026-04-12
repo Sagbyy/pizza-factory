@@ -1,9 +1,13 @@
 use std::collections::{HashMap, HashSet};
+use std::net::TcpStream;
+use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::network::tcp::{read_frame, write_frame};
 use crate::node::NodeState;
 use crate::protocol::{
-    ProcessPayload, RecipeAvailability, RecipeStatus, Tagged, TcpMessage, Update,
+    ProcessPayload, RecipeAvailability, RecipeStatus, Tagged, TcpMessage, Update, from_cbor,
+    to_cbor,
 };
 use crate::recipe::flatten_recipe;
 use uuid::Uuid;
@@ -89,6 +93,10 @@ pub fn handle_order(state: &NodeState, recipe_name: &str) -> TcpMessage {
             .collect()
     };
 
+    if let Some(response) = try_forward_order(recipe_name, &candidate_peers) {
+        return response;
+    }
+
     if candidate_peers.is_empty() {
         TcpMessage::Error {
             message: format!(
@@ -98,7 +106,7 @@ pub fn handle_order(state: &NodeState, recipe_name: &str) -> TcpMessage {
     } else {
         TcpMessage::Error {
             message: format!(
-                "recipe '{recipe_name}' not local; candidate peers: {}",
+                "recipe '{recipe_name}' not local and forwarding failed; candidate peers: {}",
                 candidate_peers.join(", ")
             ),
         }
@@ -134,9 +142,13 @@ pub fn handle_process_payload(state: &NodeState, mut payload: ProcessPayload) ->
                 .collect()
         };
 
+        if let Some(response) = try_forward_payload(&payload, &candidate_peers) {
+            return response;
+        }
+
         return TcpMessage::Error {
             message: format!(
-                "cannot execute action '{}' locally; candidate peers: {}",
+                "cannot execute action '{}' locally and forwarding failed; candidate peers: {}",
                 action.name,
                 if candidate_peers.is_empty() {
                     "none".to_string()
@@ -168,6 +180,56 @@ fn now_micros() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_micros() as u64
+}
+
+fn forward_to_peer(peer: &str, message: &TcpMessage) -> Result<TcpMessage, String> {
+    let mut stream = TcpStream::connect(peer).map_err(|e| format!("connect {peer}: {e}"))?;
+    stream
+        .set_read_timeout(Some(Duration::from_millis(500)))
+        .map_err(|e| format!("set read timeout: {e}"))?;
+    stream
+        .set_write_timeout(Some(Duration::from_millis(500)))
+        .map_err(|e| format!("set write timeout: {e}"))?;
+
+    let bytes = to_cbor(message).map_err(|e| format!("encode request: {e}"))?;
+    write_frame(&mut stream, &bytes).map_err(|e| format!("write frame: {e}"))?;
+
+    let response_bytes = read_frame(&mut stream).map_err(|e| format!("read frame: {e}"))?;
+    let response = from_cbor(&response_bytes).map_err(|e| format!("decode response: {e}"))?;
+    Ok(response)
+}
+
+fn try_forward_order(recipe_name: &str, candidate_peers: &[String]) -> Option<TcpMessage> {
+    let forwarded = TcpMessage::Order {
+        recipe_name: recipe_name.to_string(),
+    };
+
+    for peer in candidate_peers {
+        if let Ok(response) = forward_to_peer(peer, &forwarded) {
+            return Some(response);
+        }
+    }
+
+    None
+}
+
+fn try_forward_payload(payload: &ProcessPayload, candidate_peers: &[String]) -> Option<TcpMessage> {
+    for peer in candidate_peers {
+        let mut forwarded_payload = payload.clone();
+        forwarded_payload.updates.push(Update::Forward {
+            to: Tagged::addr(peer.clone()),
+            timestamp: now_micros(),
+        });
+
+        let forwarded = TcpMessage::ProcessPayload {
+            payload: forwarded_payload,
+        };
+        if let Ok(response) = forward_to_peer(peer, &forwarded) {
+            return Some(response);
+        }
+    }
+
+    None
 }
 
 #[cfg(test)]

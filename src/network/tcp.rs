@@ -36,7 +36,7 @@ mod tests {
         });
 
         let mut client = TcpStream::connect(addr).unwrap();
-        write_frame(&mut client, b"hello pizza").unwrap();
+        write_frame(&mut client, &b"hello pizza"[..]).unwrap();
 
         handle.join().unwrap();
     }
@@ -53,7 +53,7 @@ mod tests {
         });
 
         let mut client = TcpStream::connect(addr).unwrap();
-        write_frame(&mut client, b"").unwrap();
+        write_frame(&mut client, &b""[..]).unwrap();
 
         handle.join().unwrap();
     }
@@ -70,8 +70,8 @@ mod tests {
         });
 
         let mut client = TcpStream::connect(addr).unwrap();
-        write_frame(&mut client, b"premier").unwrap();
-        write_frame(&mut client, b"deuxieme").unwrap();
+        write_frame(&mut client, &b"premier"[..]).unwrap();
+        write_frame(&mut client, &b"deuxieme"[..]).unwrap();
 
         handle.join().unwrap();
     }
