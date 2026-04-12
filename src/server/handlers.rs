@@ -169,3 +169,158 @@ fn now_micros() -> u64 {
         .unwrap_or_default()
         .as_micros() as u64
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    use std::sync::RwLock;
+
+    use crate::node::{GossipState as NodeGossipState, Identity, NodeState, PeerInfo};
+    use crate::protocol::{ActionDef, ProcessPayload, Update, Version};
+    use crate::recipe::{Recipe, Step};
+
+    fn build_state(capabilities: Vec<&str>, recipes: Vec<&str>) -> NodeState {
+        let local_recipes = recipes
+            .into_iter()
+            .map(|name| Recipe {
+                name: name.to_string(),
+                steps: vec![Step::Single(ActionDef {
+                    name: "MakeDough".to_string(),
+                    params: HashMap::new(),
+                })],
+                source: format!("{name} = MakeDough"),
+            })
+            .collect();
+
+        NodeState {
+            identity: Identity {
+                addr: "127.0.0.1:8000".to_string(),
+                capabilities: capabilities.into_iter().map(str::to_string).collect(),
+                recipes: local_recipes,
+            },
+            gossip: RwLock::new(NodeGossipState {
+                peers: HashMap::new(),
+                version: Version {
+                    counter: 1,
+                    generation: 1,
+                },
+            }),
+        }
+    }
+
+    #[test]
+    fn handle_order_returns_receipt_for_local_recipe() {
+        let state = build_state(vec!["MakeDough"], vec!["Margherita"]);
+
+        let response = handle_order(&state, "Margherita");
+
+        assert!(matches!(response, TcpMessage::OrderReceipt { .. }));
+    }
+
+    #[test]
+    fn handle_order_reports_candidate_peer_for_remote_recipe() {
+        let state = build_state(vec!["MakeDough"], vec![]);
+        {
+            let mut gossip = state.gossip.write().unwrap();
+            gossip.peers.insert(
+                "127.0.0.1:8002".to_string(),
+                PeerInfo {
+                    capabilities: vec!["Bake".to_string()],
+                    recipes: vec!["Pepperoni".to_string()],
+                    version: Version {
+                        counter: 2,
+                        generation: 1,
+                    },
+                    last_seen_us: 1,
+                },
+            );
+        }
+
+        let response = handle_order(&state, "Pepperoni");
+
+        match response {
+            TcpMessage::Error { message } => {
+                assert!(message.contains("candidate peers"));
+                assert!(message.contains("127.0.0.1:8002"));
+            }
+            _ => panic!("expected Error response"),
+        }
+    }
+
+    #[test]
+    fn handle_process_payload_advances_action_when_capable() {
+        let state = build_state(vec!["MakeDough"], vec![]);
+        let payload = ProcessPayload {
+            order_id: Tagged::uuid(uuid::Uuid::nil()),
+            order_timestamp: 1,
+            delivery_host: Tagged::addr("127.0.0.1:9000"),
+            action_index: 0,
+            action_sequence: vec![ActionDef {
+                name: "MakeDough".to_string(),
+                params: HashMap::new(),
+            }],
+            content: "payload".to_string(),
+            updates: vec![],
+        };
+
+        let response = handle_process_payload(&state, payload);
+
+        match response {
+            TcpMessage::CompletedOrder { result, .. } => {
+                assert_eq!(result, "payload");
+            }
+            TcpMessage::ProcessPayload { payload } => {
+                assert_eq!(payload.action_index, 1);
+                assert!(matches!(
+                    payload.updates.last(),
+                    Some(Update::Action { .. })
+                ));
+            }
+            _ => panic!("expected ProcessPayload or CompletedOrder response"),
+        }
+    }
+
+    #[test]
+    fn handle_process_payload_reports_candidate_peer_when_missing_capability() {
+        let state = build_state(vec!["Bake"], vec![]);
+        {
+            let mut gossip = state.gossip.write().unwrap();
+            gossip.peers.insert(
+                "127.0.0.1:8003".to_string(),
+                PeerInfo {
+                    capabilities: vec!["MakeDough".to_string()],
+                    recipes: vec![],
+                    version: Version {
+                        counter: 3,
+                        generation: 1,
+                    },
+                    last_seen_us: 1,
+                },
+            );
+        }
+
+        let payload = ProcessPayload {
+            order_id: Tagged::uuid(uuid::Uuid::nil()),
+            order_timestamp: 1,
+            delivery_host: Tagged::addr("127.0.0.1:9000"),
+            action_index: 0,
+            action_sequence: vec![ActionDef {
+                name: "MakeDough".to_string(),
+                params: HashMap::new(),
+            }],
+            content: String::new(),
+            updates: vec![],
+        };
+
+        let response = handle_process_payload(&state, payload);
+
+        match response {
+            TcpMessage::Error { message } => {
+                assert!(message.contains("cannot execute action"));
+                assert!(message.contains("127.0.0.1:8003"));
+            }
+            _ => panic!("expected Error response"),
+        }
+    }
+}
