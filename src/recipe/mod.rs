@@ -1,5 +1,5 @@
 pub mod parser;
-pub use parser::{flatten_recipe, parse_recipes, ParseError};
+pub use parser::{ParseError, flatten_recipe, parse_recipes};
 
 use crate::protocol::ActionDef;
 
@@ -43,7 +43,11 @@ fn step_to_dsl(step: &Step) -> String {
     match step {
         Step::Single(a) => action_to_dsl(a),
         Step::Parallel(actions) => {
-            let inner = actions.iter().map(action_to_dsl).collect::<Vec<_>>().join(", ");
+            let inner = actions
+                .iter()
+                .map(action_to_dsl)
+                .collect::<Vec<_>>()
+                .join(", ");
             format!("[{inner}]")
         }
         Step::Repeated(a, n) => format!("{}^{n}", action_to_dsl(a)),

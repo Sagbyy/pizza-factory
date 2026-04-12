@@ -1,3 +1,9 @@
+//! Pizza Factory node executable.
+//!
+//! This binary starts either a server node (`start` / `start-tui`) or a client
+//! command (`client`). The server path runs TCP request handling and UDP gossip
+//! side by side so nodes can discover peers and forward recipe operations.
+
 mod cli;
 mod network;
 mod node;

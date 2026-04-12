@@ -144,7 +144,9 @@ fn parse_recipe(block: &str) -> Result<Recipe, ParseError> {
         .collect();
 
     if step_bodies.is_empty() {
-        return Err(ParseError::NoSteps { recipe: name.clone() });
+        return Err(ParseError::NoSteps {
+            recipe: name.clone(),
+        });
     }
 
     let steps = step_bodies
@@ -155,11 +157,19 @@ fn parse_recipe(block: &str) -> Result<Recipe, ParseError> {
 
     let source = {
         // Temporarily build the recipe without source to generate the canonical string.
-        let r = Recipe { name: name.clone(), steps: steps.clone(), source: String::new() };
+        let r = Recipe {
+            name: name.clone(),
+            steps: steps.clone(),
+            source: String::new(),
+        };
         r.to_dsl_string()
     };
 
-    Ok(Recipe { name, steps, source })
+    Ok(Recipe {
+        name,
+        steps,
+        source,
+    })
 }
 
 /// Parse one step body (after `->` has been stripped).
@@ -298,9 +308,9 @@ fn parse_params(params_str: &str) -> Result<HashMap<String, String>, ParseError>
 
     for token in params_str.split(',') {
         let token = token.trim();
-        let eq_pos = token
-            .find('=')
-            .ok_or_else(|| ParseError::MalformedParam { token: token.to_string() })?;
+        let eq_pos = token.find('=').ok_or_else(|| ParseError::MalformedParam {
+            token: token.to_string(),
+        })?;
 
         let key = token[..eq_pos].trim().to_string();
         let value = token[eq_pos + 1..].trim().to_string();
@@ -367,9 +377,7 @@ mod tests {
     ///   assert_recipe!(input, name = "Foo", steps = 5)
     ///     → also assert recipes[0].steps.len()
     macro_rules! assert_recipe {
-        ($input:expr) => {{
-            parse_recipes($input).unwrap()
-        }};
+        ($input:expr) => {{ parse_recipes($input).unwrap() }};
         ($input:expr, name = $name:expr) => {{
             let recipes = parse_recipes($input).unwrap();
             assert_eq!(recipes[0].name, $name);
@@ -536,7 +544,8 @@ mod tests {
     #[test]
     fn multiline_and_flat_produce_same_source() {
         // Both input formats must yield the same canonical source string.
-        let multiline = "Pepperoni =\n    MakeDough\n    -> AddBase(base_type=tomato)\n    -> Bake(duration=6)";
+        let multiline =
+            "Pepperoni =\n    MakeDough\n    -> AddBase(base_type=tomato)\n    -> Bake(duration=6)";
         let flat = "Pepperoni = MakeDough -> AddBase(base_type=tomato) -> Bake(duration=6)";
         let r_multi = &parse_recipes(multiline).unwrap()[0];
         let r_flat = &parse_recipes(flat).unwrap()[0];
@@ -626,7 +635,10 @@ mod tests {
         assert_eq!(flatten_recipe(pepperoni).len(), 5);
 
         // QuattroFormaggi: MakeDough AddBase AddCheese×4 Bake AddOliveOil = 8
-        let qf = recipes.iter().find(|r| r.name == "QuattroFormaggi").unwrap();
+        let qf = recipes
+            .iter()
+            .find(|r| r.name == "QuattroFormaggi")
+            .unwrap();
         assert_eq!(flatten_recipe(qf).len(), 8);
     }
 }

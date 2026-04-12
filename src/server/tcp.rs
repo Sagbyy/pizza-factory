@@ -5,7 +5,7 @@ use std::thread;
 
 use crate::network::tcp::{read_frame, write_frame};
 use crate::node::NodeState;
-use crate::protocol::{from_cbor, to_cbor, TcpMessage};
+use crate::protocol::{TcpMessage, from_cbor, to_cbor};
 use crate::server::handlers;
 
 /// Bind the TCP listener and spawn the accept loop thread.
@@ -72,13 +72,11 @@ fn handle_connection(mut stream: TcpStream, state: Arc<NodeState>) {
 fn dispatch(msg: TcpMessage, state: &NodeState) -> TcpMessage {
     match msg {
         TcpMessage::ListRecipes => handlers::handle_list_recipes(state),
-        TcpMessage::GetRecipe { recipe_name } => {
-            handlers::handle_get_recipe(state, &recipe_name)
-        }
+        TcpMessage::GetRecipe { recipe_name } => handlers::handle_get_recipe(state, &recipe_name),
         TcpMessage::Order { recipe_name } => handlers::handle_order(state, &recipe_name),
-        TcpMessage::ProcessPayload { payload } => {
-            handlers::handle_process_payload(state, payload)
-        }
-        _ => TcpMessage::Error { message: "unexpected message type".into() },
+        TcpMessage::ProcessPayload { payload } => handlers::handle_process_payload(state, payload),
+        _ => TcpMessage::Error {
+            message: "unexpected message type".into(),
+        },
     }
 }

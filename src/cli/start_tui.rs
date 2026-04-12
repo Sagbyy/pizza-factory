@@ -1,5 +1,5 @@
-use clap::Args;
 use crate::cli::start::StartArgs;
+use clap::Args;
 
 #[derive(Args, Debug)]
 pub struct StartTuiArgs {

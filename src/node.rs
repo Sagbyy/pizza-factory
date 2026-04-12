@@ -4,7 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::cli::start::StartArgs;
 use crate::protocol::Version;
-use crate::recipe::{parse_recipes, ParseError, Recipe};
+use crate::recipe::{ParseError, Recipe, parse_recipes};
 
 // ── Error type ────────────────────────────────────────────────────────────────
 
@@ -76,7 +76,10 @@ impl PeerInfo {
         PeerInfo {
             capabilities: vec![],
             recipes: vec![],
-            version: Version { counter: 0, generation: 0 },
+            version: Version {
+                counter: 0,
+                generation: 0,
+            },
             last_seen_us: 0,
         }
     }
@@ -150,7 +153,8 @@ fn load_recipes(path: Option<&str>) -> Result<Vec<Recipe>, NodeError> {
 /// Capabilities are not yet known; they will be filled in by the UDP layer
 /// when the first Announce is received from each peer.
 fn bootstrap_peers(addrs: &[String]) -> HashMap<String, PeerInfo> {
-    addrs.iter()
+    addrs
+        .iter()
         .map(|addr| (addr.clone(), PeerInfo::unknown()))
         .collect()
 }
