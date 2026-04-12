@@ -43,10 +43,6 @@ Captures disponibles:
 - `doc/pcap/client-command-1.pcap`
 - `doc/pcap/client-command-2.pcapng`
 
-Spécification detaillée:
-
-- `SPECIFICATIONS.md`
-
 ## 4. Architecture retenue
 
 ### 4.1 Vue globale
@@ -171,6 +167,7 @@ Possibles extensions:
 
 ## 13. Annexes
 
-- Commandes de test rapide: `src/cli/command.txt`
-- Specification protocole: `SPECIFICATIONS.md`
+- Reverse engineering: `REVERSE-ENGINEERING.md`
+- Specification protocole: `PROTOCOLE-SPEC.md`
 - Captures reseau: `doc/pcap/*`
+- Commandes de test rapide: `src/cli/command.txt`
