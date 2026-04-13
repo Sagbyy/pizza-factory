@@ -1,14 +1,40 @@
+use ciborium::tag::Required;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::collections::HashMap;
 use std::io::Cursor;
 use uuid::Uuid;
 
-/// CBOR tag used for UUID values.
-pub const UUID: u64 = 37;
-/// CBOR tag used for node address values.
-pub const ADDR: u64 = 260;
-/// CBOR tag used for last-seen maps.
-pub const LAST_SEEN: u64 = 1001;
+/// UUID value serialized with native CBOR tag 37.
+pub type TaggedUuid = Required<String, 37>;
+/// Node address serialized with native CBOR tag 260.
+pub type NodeAddr = Required<String, 260>;
+/// Last-seen payload can be encoded either with address-string keys
+/// or numeric keys depending on peer implementation.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum LastSeenMap {
+    /// Preferred shape: address -> timestamp.
+    ByAddress(HashMap<String, u64>),
+    /// Compatibility shape observed from reference binary.
+    ByCode(HashMap<i64, u64>),
+}
+/// Last-seen map serialized with native CBOR tag 1001.
+pub type TaggedLastSeen = Required<LastSeenMap, 1001>;
+
+/// Creates a tagged UUID value.
+pub fn uuid(value: Uuid) -> TaggedUuid {
+    Required(value.to_string())
+}
+
+/// Creates a tagged node address value.
+pub fn addr(value: impl Into<String>) -> NodeAddr {
+    Required(value.into())
+}
+
+/// Creates a tagged last-seen map value.
+pub fn last_seen(value: HashMap<String, u64>) -> TaggedLastSeen {
+    Required(LastSeenMap::ByAddress(value))
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 /// Monotonic version tuple used by gossip messages.
@@ -17,50 +43,6 @@ pub struct Version {
     pub counter: u64,
     /// Generation timestamp for version ordering.
     pub generation: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-/// Generic tagged value used for typed CBOR payloads.
-pub struct Tagged<T> {
-    /// Numeric tag identifier.
-    pub tag: u64,
-    /// Wrapped payload value.
-    pub value: T,
-}
-
-impl<T> Tagged<T> {
-    /// Creates a tagged payload.
-    pub fn new(tag: u64, value: T) -> Self {
-        Self { tag, value }
-    }
-}
-
-/// UUID value serialized with a dedicated CBOR tag.
-pub type TaggedUuid = Tagged<Uuid>;
-/// Node address serialized with a dedicated CBOR tag.
-pub type NodeAddr = Tagged<String>;
-/// Last-seen map serialized with a dedicated CBOR tag.
-pub type TaggedLastSeen = Tagged<HashMap<String, u64>>;
-
-impl Tagged<Uuid> {
-    /// Builds a tagged UUID value.
-    pub fn uuid(value: Uuid) -> Self {
-        Self::new(UUID, value)
-    }
-}
-
-impl Tagged<String> {
-    /// Builds a tagged node address value.
-    pub fn addr(value: impl Into<String>) -> Self {
-        Self::new(ADDR, value.into())
-    }
-}
-
-impl Tagged<HashMap<String, u64>> {
-    /// Builds a tagged last-seen map value.
-    pub fn last_seen(value: HashMap<String, u64>) -> Self {
-        Self::new(LAST_SEEN, value)
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -149,7 +131,7 @@ pub struct RecipeStatus {
     pub missing_actions: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 /// Aggregated recipe availability (local and discovered remote peers).
 pub struct RecipeAvailability {
     /// Local status for this recipe on the current node.
@@ -157,6 +139,47 @@ pub struct RecipeAvailability {
     /// Remote peers known (via gossip) to advertise this recipe.
     #[serde(default)]
     pub remote_peers: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum RecipeAvailabilityWire {
+    Full {
+        local: RecipeStatus,
+        #[serde(default)]
+        remote_peers: Vec<String>,
+    },
+    Flat {
+        #[serde(default)]
+        missing_actions: Vec<String>,
+        #[serde(default)]
+        remote_peers: Vec<String>,
+    },
+}
+
+impl<'de> Deserialize<'de> for RecipeAvailability {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let wire = RecipeAvailabilityWire::deserialize(deserializer)?;
+        Ok(match wire {
+            RecipeAvailabilityWire::Full {
+                local,
+                remote_peers,
+            } => Self {
+                local,
+                remote_peers,
+            },
+            RecipeAvailabilityWire::Flat {
+                missing_actions,
+                remote_peers,
+            } => Self {
+                local: RecipeStatus { missing_actions },
+                remote_peers,
+            },
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -216,10 +239,10 @@ mod tests {
     #[test]
     fn udp_message_roundtrip() {
         let msg = UdpMessage::Announce(Announce {
-            node_addr: Tagged::addr("127.0.0.1:8000"),
+            node_addr: addr("127.0.0.1:8000"),
             capabilities: vec!["MakeDough".to_string()],
             recipes: vec!["Pepperoni".to_string()],
-            peers: vec![Tagged::addr("127.0.0.1:8002")],
+            peers: vec![addr("127.0.0.1:8002")],
             version: Version {
                 counter: 3,
                 generation: 1_773_591_739,
@@ -235,9 +258,9 @@ mod tests {
     fn tcp_process_payload_roundtrip() {
         let msg = TcpMessage::ProcessPayload {
             payload: ProcessPayload {
-                order_id: Tagged::uuid(Uuid::nil()),
+                order_id: uuid(Uuid::nil()),
                 order_timestamp: 1_773_599_028_742_680,
-                delivery_host: Tagged::addr("127.0.0.1:8002"),
+                delivery_host: addr("127.0.0.1:8002"),
                 action_index: 0,
                 action_sequence: vec![ActionDef {
                     name: "MakeDough".to_string(),
@@ -245,7 +268,7 @@ mod tests {
                 }],
                 content: String::new(),
                 updates: vec![Update::Forward {
-                    to: Tagged::addr("127.0.0.1:8000"),
+                    to: addr("127.0.0.1:8000"),
                     timestamp: 1_773_599_028_758_515,
                 }],
             },
@@ -261,7 +284,7 @@ mod tests {
         let mut last_seen_map = HashMap::new();
         last_seen_map.insert("127.0.0.1:8002".to_string(), 1_773_591_739);
         let check: Check = Check {
-            last_seen: Tagged::last_seen(last_seen_map),
+            last_seen: last_seen(last_seen_map),
             version: Version {
                 counter: 1,
                 generation: 12345,

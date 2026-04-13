@@ -6,8 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::network::tcp::{read_frame, write_frame};
 use crate::node::NodeState;
 use crate::protocol::{
-    ProcessPayload, RecipeAvailability, RecipeStatus, Tagged, TcpMessage, Update, from_cbor,
-    to_cbor,
+    ProcessPayload, RecipeAvailability, RecipeStatus, TcpMessage, Update, from_cbor, to_cbor,
 };
 use crate::recipe::flatten_recipe;
 use uuid::Uuid;
@@ -51,7 +50,7 @@ pub fn handle_list_recipes(state: &NodeState) -> TcpMessage {
         })
         .collect();
 
-    // Add recipes discovered via gossip from remote peers
+    // Add recipes discovered via gossip from remote peers.
     {
         let gossip = state.gossip.read().unwrap();
         for (peer_addr, peer_info) in &gossip.peers {
@@ -116,7 +115,7 @@ pub fn handle_get_recipe(state: &NodeState, recipe_name: &str) -> TcpMessage {
 pub fn handle_order(state: &NodeState, recipe_name: &str) -> TcpMessage {
     if state.identity.recipes.iter().any(|r| r.name == recipe_name) {
         return TcpMessage::OrderReceipt {
-            order_id: Tagged::uuid(Uuid::new_v4()),
+            order_id: crate::protocol::uuid(Uuid::new_v4()),
         };
     }
 
@@ -257,7 +256,7 @@ fn try_forward_payload(payload: &ProcessPayload, candidate_peers: &[String]) -> 
     for peer in candidate_peers {
         let mut forwarded_payload = payload.clone();
         forwarded_payload.updates.push(Update::Forward {
-            to: Tagged::addr(peer.clone()),
+            to: crate::protocol::addr(peer.clone()),
             timestamp: now_micros(),
         });
 
@@ -338,7 +337,10 @@ mod tests {
                 PeerInfo {
                     capabilities: vec!["Bake".to_string()],
                     recipes: vec!["Pepperoni".to_string()],
-                    version: Version { counter: 2, generation: 1 },
+                    version: Version {
+                        counter: 2,
+                        generation: 1,
+                    },
                     last_seen_us: 1,
                 },
             );
@@ -354,9 +356,9 @@ mod tests {
     fn handle_process_payload_advances_action_when_capable() {
         let state = build_state(vec!["MakeDough"], vec![]);
         let payload = ProcessPayload {
-            order_id: Tagged::uuid(uuid::Uuid::nil()),
+            order_id: crate::protocol::uuid(uuid::Uuid::nil()),
             order_timestamp: 1,
-            delivery_host: Tagged::addr("127.0.0.1:9000"),
+            delivery_host: crate::protocol::addr("127.0.0.1:9000"),
             action_index: 0,
             action_sequence: vec![ActionDef {
                 name: "MakeDough".to_string(),
@@ -403,9 +405,9 @@ mod tests {
         }
 
         let payload = ProcessPayload {
-            order_id: Tagged::uuid(uuid::Uuid::nil()),
+            order_id: crate::protocol::uuid(uuid::Uuid::nil()),
             order_timestamp: 1,
-            delivery_host: Tagged::addr("127.0.0.1:9000"),
+            delivery_host: crate::protocol::addr("127.0.0.1:9000"),
             action_index: 0,
             action_sequence: vec![ActionDef {
                 name: "MakeDough".to_string(),
