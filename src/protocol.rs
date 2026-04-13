@@ -8,8 +8,18 @@ use uuid::Uuid;
 pub type TaggedUuid = Required<String, 37>;
 /// Node address serialized with native CBOR tag 260.
 pub type NodeAddr = Required<String, 260>;
+/// Last-seen payload can be encoded either with address-string keys
+/// or numeric keys depending on peer implementation.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum LastSeenMap {
+    /// Preferred shape: address -> timestamp.
+    ByAddress(HashMap<String, u64>),
+    /// Compatibility shape observed from reference binary.
+    ByCode(HashMap<i64, u64>),
+}
 /// Last-seen map serialized with native CBOR tag 1001.
-pub type TaggedLastSeen = Required<HashMap<String, u64>, 1001>;
+pub type TaggedLastSeen = Required<LastSeenMap, 1001>;
 
 /// Creates a tagged UUID value.
 pub fn uuid(value: Uuid) -> TaggedUuid {
@@ -23,7 +33,7 @@ pub fn addr(value: impl Into<String>) -> NodeAddr {
 
 /// Creates a tagged last-seen map value.
 pub fn last_seen(value: HashMap<String, u64>) -> TaggedLastSeen {
-    Required(value)
+    Required(LastSeenMap::ByAddress(value))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -121,7 +131,7 @@ pub struct RecipeStatus {
     pub missing_actions: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 /// Aggregated recipe availability (local and discovered remote peers).
 pub struct RecipeAvailability {
     /// Local status for this recipe on the current node.
@@ -129,6 +139,47 @@ pub struct RecipeAvailability {
     /// Remote peers known (via gossip) to advertise this recipe.
     #[serde(default)]
     pub remote_peers: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum RecipeAvailabilityWire {
+    Full {
+        local: RecipeStatus,
+        #[serde(default)]
+        remote_peers: Vec<String>,
+    },
+    Flat {
+        #[serde(default)]
+        missing_actions: Vec<String>,
+        #[serde(default)]
+        remote_peers: Vec<String>,
+    },
+}
+
+impl<'de> Deserialize<'de> for RecipeAvailability {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let wire = RecipeAvailabilityWire::deserialize(deserializer)?;
+        Ok(match wire {
+            RecipeAvailabilityWire::Full {
+                local,
+                remote_peers,
+            } => Self {
+                local,
+                remote_peers,
+            },
+            RecipeAvailabilityWire::Flat {
+                missing_actions,
+                remote_peers,
+            } => Self {
+                local: RecipeStatus { missing_actions },
+                remote_peers,
+            },
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

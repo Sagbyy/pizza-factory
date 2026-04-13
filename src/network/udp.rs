@@ -8,6 +8,7 @@ use crate::node::{NodeState, PeerInfo};
 use crate::protocol::{Announce, Check, UdpMessage, Version, from_cbor, to_cbor};
 
 /// Returns the current Unix timestamp in seconds.
+#[cfg(test)]
 pub fn now_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -138,7 +139,20 @@ pub fn process_one_datagram_shared(
 ) -> Result<UdpMessage> {
     match recv_datagram(socket) {
         Ok((bytes, from)) => {
-            let message = decode_udp_message(&bytes)?;
+            let message = match decode_udp_message(&bytes) {
+                Ok(msg) => msg,
+                Err(e) => {
+                    // Be tolerant to unknown/malformed frames from heterogeneous peers.
+                    eprintln!("UDP decode error from {from}: {e}");
+                    return Ok(UdpMessage::Pong(Check {
+                        last_seen: crate::protocol::last_seen(HashMap::new()),
+                        version: Version {
+                            counter: 0,
+                            generation: 0,
+                        },
+                    }));
+                }
+            };
             let from_addr = from.to_string();
 
             if let Some(reply) = handle_udp_message_shared(node_state, &from_addr, &message) {
@@ -149,9 +163,10 @@ pub fn process_one_datagram_shared(
         }
         Err(e)
             if e.kind() == std::io::ErrorKind::WouldBlock
-                || e.kind() == std::io::ErrorKind::TimedOut =>
+                || e.kind() == std::io::ErrorKind::TimedOut
+                || e.kind() == std::io::ErrorKind::ConnectionReset =>
         {
-            // Timeout or would-block: return empty Pong so the loop continues
+            // Non-fatal socket conditions: keep loop alive.
             Ok(UdpMessage::Pong(Check {
                 last_seen: crate::protocol::last_seen(HashMap::new()),
                 version: Version {
