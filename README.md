@@ -163,7 +163,7 @@ Possibles extensions:
 
 - Herman: modèles de données + gossip UDP + CI + log.
 - Van Anh: Reverse-Engineering + Spec Protocole + Parseur de recette + handlers TCP.
-- Salahe-Eddine: Reverse-Engineering + Spec Protocole + client CLI + CI.
+- Salahe-Eddine: Reverse-Engineering + Spec Protocole + client CLI + client TUI + CI.
 
 ## 13. Annexes
 
