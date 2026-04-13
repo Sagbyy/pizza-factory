@@ -97,7 +97,7 @@ pub fn client_order(peer: &str, recipe_name: &str) -> io::Result<()> {
 
     match response {
         TcpMessage::OrderReceipt { order_id } => {
-            println!("Order placed successfully! Order ID: {}", order_id.value);
+            println!("Order placed successfully! Order ID: {}", order_id.0);
         }
         TcpMessage::Error { message } => {
             eprintln!("Error: {}", message);
