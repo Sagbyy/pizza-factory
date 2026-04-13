@@ -11,3 +11,4 @@ clap = { version = "4.6.0", features = ["derive"] }
 ratatui = "0.30.0"
 crossterm = "0.28"
 tui-logger = "0.18.2"
+log = "0.4"

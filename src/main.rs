@@ -22,7 +22,6 @@ use network::udp::run_gossip_service_shared;
 use std::net::UdpSocket;
 use std::thread;
 
-
 fn main() {
     let cli = Cli::parse();
 
