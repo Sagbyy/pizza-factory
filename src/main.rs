@@ -10,6 +10,7 @@ mod node;
 mod protocol;
 mod recipe;
 mod server;
+mod tui;
 
 use std::sync::Arc;
 
@@ -20,6 +21,7 @@ use cli::command::Commands;
 use network::udp::run_gossip_service_shared;
 use std::net::UdpSocket;
 use std::thread;
+
 
 fn main() {
     let cli = Cli::parse();
@@ -71,6 +73,13 @@ fn main() {
         }
         Commands::StartTui(args) => {
             println!("Starting TUI server on {:?}...", args);
+            match ratatui::run(tui::app::start_tui) {
+                Ok(_) => println!("TUI server stopped."),
+                Err(e) => {
+                    eprintln!("TUI server error: {e}");
+                    std::process::exit(1);
+                }
+            }
         }
         Commands::ListCapabilities => {
             println!("Listing capabilities...");
