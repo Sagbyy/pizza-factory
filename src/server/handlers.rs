@@ -8,7 +8,7 @@ use crate::node::NodeState;
 use crate::protocol::{
     ProcessPayload, RecipeAvailability, RecipeStatus, TcpMessage, Update, from_cbor, to_cbor,
 };
-use crate::recipe::flatten_recipe;
+use crate::recipe::{flatten_recipe, parse_recipes};
 use uuid::Uuid;
 
 /// Build the recipe list answer for a `ListRecipes` command.
@@ -110,94 +110,200 @@ pub fn handle_get_recipe(state: &NodeState, recipe_name: &str) -> TcpMessage {
 }
 
 /// Place an order for a recipe.
-/// Returns an order receipt for local recipes.
-/// If recipe is not local, it hints candidate peers learned via gossip.
-pub fn handle_order(state: &NodeState, recipe_name: &str) -> TcpMessage {
-    if state.identity.recipes.iter().any(|r| r.name == recipe_name) {
-        return TcpMessage::OrderReceipt {
-            order_id: crate::protocol::uuid(Uuid::new_v4()),
-        };
-    }
-
-    let candidate_peers: Vec<String> = {
+///
+/// Writes `OrderReceipt` immediately to `stream` (frame 1), then fetches the
+/// recipe, builds the initial `ProcessPayload`, and drives execution to
+/// completion. Returns `CompletedOrder` or `Error` as frame 2 (written by the
+/// caller). Returns `OrderDeclined` without touching `stream` when the recipe
+/// is unknown.
+pub fn handle_order(state: &NodeState, recipe_name: &str, stream: &mut TcpStream) -> TcpMessage {
+    // Check availability: local recipe file or a peer that advertised it.
+    let is_local = state.identity.recipes.iter().any(|r| r.name == recipe_name);
+    let peer_knows = {
         let gossip = state.gossip.read().unwrap();
         gossip
             .peers
-            .iter()
-            .filter(|(_, info)| info.recipes.iter().any(|r| r == recipe_name))
-            .map(|(addr, _)| addr.clone())
-            .collect()
+            .values()
+            .any(|info| info.recipes.iter().any(|r| r == recipe_name))
     };
 
-    if let Some(response) = try_forward_order(recipe_name, &candidate_peers) {
-        return response;
+    if !is_local && !peer_knows {
+        return TcpMessage::OrderDeclined {
+            message: "Unknown recipe".to_string(),
+        };
     }
 
-    TcpMessage::OrderDeclined {
-        message: "Unknown recipe".to_string(),
+    // Acknowledge immediately — client gets the UUID before any work starts.
+    let order_id = Uuid::new_v4();
+    let receipt = TcpMessage::OrderReceipt {
+        order_id: crate::protocol::uuid(order_id),
+    };
+    match to_cbor(&receipt).map_err(|e| format!("encode receipt: {e}")) {
+        Ok(bytes) => {
+            if let Err(e) = write_frame(stream, &bytes) {
+                return TcpMessage::Error {
+                    message: format!("send receipt: {e}"),
+                };
+            }
+        }
+        Err(e) => return TcpMessage::Error { message: e },
+    }
+
+    // Fetch DSL — local first, then from the peer that advertised it.
+    let dsl = if is_local {
+        state
+            .identity
+            .recipes
+            .iter()
+            .find(|r| r.name == recipe_name)
+            .map(|r| r.source.clone())
+            .unwrap_or_default()
+    } else {
+        match handle_get_recipe(state, recipe_name) {
+            TcpMessage::RecipeAnswer { recipe } => recipe,
+            TcpMessage::Error { message } => {
+                return TcpMessage::Error {
+                    message: format!("fetch recipe: {message}"),
+                }
+            }
+            other => {
+                return TcpMessage::Error {
+                    message: format!("unexpected get_recipe response: {other:?}"),
+                }
+            }
+        }
+    };
+
+    // Parse and flatten the recipe into a linear action sequence.
+    let recipes = match parse_recipes(&dsl) {
+        Ok(r) => r,
+        Err(e) => {
+            return TcpMessage::Error {
+                message: format!("parse recipe: {e}"),
+            }
+        }
+    };
+    let recipe = match recipes.into_iter().find(|r| r.name == recipe_name) {
+        Some(r) => r,
+        None => {
+            return TcpMessage::Error {
+                message: format!("recipe '{recipe_name}' not found after fetch"),
+            }
+        }
+    };
+    let action_sequence = flatten_recipe(&recipe);
+
+    // Build the initial payload and drive execution.
+    let payload = ProcessPayload {
+        order_id: crate::protocol::uuid(order_id),
+        order_timestamp: now_micros(),
+        delivery_host: crate::protocol::addr(state.identity.addr.clone()),
+        action_index: 0,
+        action_sequence,
+        content: String::new(),
+        updates: vec![],
+    };
+
+    handle_process_payload(state, payload)
+}
+
+/// Execute actions in a payload loop until this node can no longer proceed,
+/// then forward to a peer or deliver the completed order.
+///
+/// Each iteration executes one action this node is capable of, updates
+/// `content` and `updates`, and advances `action_index`. When an action
+/// exceeds local capabilities the payload is forwarded to a peer that has it.
+/// When all actions are done a `Deliver` update is appended and `CompletedOrder`
+/// is returned.
+pub fn handle_process_payload(state: &NodeState, mut payload: ProcessPayload) -> TcpMessage {
+    loop {
+        let idx = payload.action_index as usize;
+
+        if idx >= payload.action_sequence.len() {
+            payload.updates.push(Update::Deliver { timestamp: now_micros() });
+            return TcpMessage::CompletedOrder {
+                recipe_name: "unknown".into(),
+                result: build_result(&payload.content),
+            };
+        }
+
+        let action = payload.action_sequence[idx].clone();
+        let can_execute = state
+            .identity
+            .capabilities
+            .iter()
+            .any(|cap| cap == &action.name);
+
+        if !can_execute {
+            let candidate_peers: Vec<String> = {
+                let gossip = state.gossip.read().unwrap();
+                gossip
+                    .peers
+                    .iter()
+                    .filter(|(_, info)| info.capabilities.iter().any(|cap| cap == &action.name))
+                    .map(|(addr, _)| addr.clone())
+                    .collect()
+            };
+
+            if let Some(response) = try_forward_payload(&payload, &candidate_peers) {
+                return response;
+            }
+
+            return TcpMessage::Error {
+                message: format!(
+                    "cannot execute action '{}' locally and forwarding failed; candidate peers: {}",
+                    action.name,
+                    if candidate_peers.is_empty() {
+                        "none".to_string()
+                    } else {
+                        candidate_peers.join(", ")
+                    }
+                ),
+            };
+        }
+
+        payload.content = apply_action(&action, &payload.content);
+        payload.updates.push(Update::Action {
+            action,
+            timestamp: now_micros(),
+        });
+        payload.action_index += 1;
     }
 }
 
-/// Execute the next action in a payload and forward or deliver.
-/// This local step validates capability and advances the action index.
-pub fn handle_process_payload(state: &NodeState, mut payload: ProcessPayload) -> TcpMessage {
-    let idx = payload.action_index as usize;
-    if idx >= payload.action_sequence.len() {
-        return TcpMessage::CompletedOrder {
-            recipe_name: "unknown".into(),
-            result: payload.content,
-        };
-    }
-
-    let action = payload.action_sequence[idx].clone();
-    let can_execute = state
-        .identity
-        .capabilities
-        .iter()
-        .any(|cap| cap == &action.name);
-
-    if !can_execute {
-        let candidate_peers: Vec<String> = {
-            let gossip = state.gossip.read().unwrap();
-            gossip
-                .peers
-                .iter()
-                .filter(|(_, info)| info.capabilities.iter().any(|cap| cap == &action.name))
-                .map(|(addr, _)| addr.clone())
-                .collect()
-        };
-
-        if let Some(response) = try_forward_payload(&payload, &candidate_peers) {
-            return response;
+/// Map an executed action to the line it appends to the pizza content string.
+fn apply_action(action: &crate::protocol::ActionDef, current_content: &str) -> String {
+    let line = match action.name.as_str() {
+        "MakeDough" => "Dough: ready\n".to_string(),
+        "AddBase" => {
+            let base = action.params.get("base_type").map(String::as_str).unwrap_or("unknown");
+            format!("Dough + Base({base}): ready\n")
         }
+        "AddCheese" => {
+            let amount = action.params.get("amount").map(String::as_str).unwrap_or("1");
+            format!("Cheese x{amount}\n")
+        }
+        "AddPepperoni" => {
+            let slices = action.params.get("slices").map(String::as_str).unwrap_or("0");
+            format!("Pepperoni slices x{slices}\n")
+        }
+        "Bake" => {
+            let duration = action.params.get("duration").map(String::as_str).unwrap_or("0");
+            format!("Baked({duration})\n")
+        }
+        "AddOliveOil"  => "OliveOil: added\n".to_string(),
+        "AddMushrooms" => "Mushrooms: added\n".to_string(),
+        "AddBasil"     => "Basil: added\n".to_string(),
+        "AddGarlic"    => "Garlic: added\n".to_string(),
+        "AddOregano"   => "Oregano: added\n".to_string(),
+        other          => format!("{other}: done\n"),
+    };
+    format!("{current_content}{line}")
+}
 
-        return TcpMessage::Error {
-            message: format!(
-                "cannot execute action '{}' locally and forwarding failed; candidate peers: {}",
-                action.name,
-                if candidate_peers.is_empty() {
-                    "none".to_string()
-                } else {
-                    candidate_peers.join(", ")
-                }
-            ),
-        };
-    }
-
-    payload.updates.push(Update::Action {
-        action,
-        timestamp: now_micros(),
-    });
-    payload.action_index += 1;
-
-    if payload.action_index as usize >= payload.action_sequence.len() {
-        return TcpMessage::CompletedOrder {
-            recipe_name: "unknown".into(),
-            result: payload.content,
-        };
-    }
-
-    TcpMessage::ProcessPayload { payload }
+/// Serialize the accumulated pizza content as the completed order result.
+fn build_result(content: &str) -> String {
+    content.to_owned()
 }
 
 fn now_micros() -> u64 {
@@ -224,19 +330,6 @@ fn forward_to_peer(peer: &str, message: &TcpMessage) -> Result<TcpMessage, Strin
     Ok(response)
 }
 
-fn try_forward_order(recipe_name: &str, candidate_peers: &[String]) -> Option<TcpMessage> {
-    let forwarded = TcpMessage::Order {
-        recipe_name: recipe_name.to_string(),
-    };
-
-    for peer in candidate_peers {
-        if let Ok(response) = forward_to_peer(peer, &forwarded) {
-            return Some(response);
-        }
-    }
-
-    None
-}
 
 fn try_forward_get_recipe(recipe_name: &str, candidate_peers: &[String]) -> Option<TcpMessage> {
     let forwarded = TcpMessage::GetRecipe {
@@ -278,8 +371,18 @@ mod tests {
     use std::sync::RwLock;
 
     use crate::node::{GossipState as NodeGossipState, Identity, NodeState, PeerInfo};
-    use crate::protocol::{ActionDef, ProcessPayload, Update, Version};
+    use crate::protocol::{ActionDef, ProcessPayload, Version};
     use crate::recipe::{Recipe, Step};
+
+    /// Create a connected loopback stream pair for tests that need a TcpStream.
+    /// Returns (client_side, server_side).
+    fn make_stream_pair() -> (TcpStream, TcpStream) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let client = TcpStream::connect(addr).unwrap();
+        let (server, _) = listener.accept().unwrap();
+        (client, server)
+    }
 
     fn build_state(capabilities: Vec<&str>, recipes: Vec<&str>) -> NodeState {
         let local_recipes = recipes
@@ -311,29 +414,45 @@ mod tests {
     }
 
     #[test]
-    fn handle_order_returns_receipt_for_local_recipe() {
+    fn handle_order_sends_receipt_then_returns_completed_order() {
         let state = build_state(vec!["MakeDough"], vec!["Margherita"]);
+        let (mut client, mut server) = make_stream_pair();
 
-        let response = handle_order(&state, "Margherita");
+        let response = handle_order(&state, "Margherita", &mut server);
 
-        assert!(matches!(response, TcpMessage::OrderReceipt { .. }));
+        // Frame 1: OrderReceipt written directly to the stream.
+        let receipt_bytes = read_frame(&mut client).unwrap();
+        let receipt: TcpMessage = from_cbor(&receipt_bytes).unwrap();
+        assert!(
+            matches!(receipt, TcpMessage::OrderReceipt { .. }),
+            "expected OrderReceipt as frame 1, got {receipt:?}"
+        );
+
+        // Return value: CompletedOrder (frame 2, written by handle_connection).
+        assert!(
+            matches!(response, TcpMessage::CompletedOrder { .. }),
+            "expected CompletedOrder as frame 2, got {response:?}"
+        );
     }
 
     #[test]
     fn handle_order_declines_when_recipe_unknown_or_unreachable() {
-        // Case 1: no peer knows the recipe
         let state = build_state(vec!["MakeDough"], vec![]);
-        let response = handle_order(&state, "UnknownPizza");
+        let (mut _client, mut server) = make_stream_pair();
+
+        // Case 1: no peer knows the recipe — OrderDeclined, stream untouched.
+        let response = handle_order(&state, "UnknownPizza", &mut server);
         assert!(
             matches!(response, TcpMessage::OrderDeclined { ref message } if message == "Unknown recipe"),
             "expected OrderDeclined with 'Unknown recipe', got {response:?}"
         );
 
-        // Case 2: a peer claims to know the recipe but is unreachable
+        // Case 2: a peer claims to know the recipe but is unreachable.
+        // Port 19999 is used so tests never hit a real running agent.
         {
             let mut gossip = state.gossip.write().unwrap();
             gossip.peers.insert(
-                "127.0.0.1:8002".to_string(),
+                "127.0.0.1:19999".to_string(),
                 PeerInfo {
                     capabilities: vec!["Bake".to_string()],
                     recipes: vec!["Pepperoni".to_string()],
@@ -345,15 +464,19 @@ mod tests {
                 },
             );
         }
-        let response = handle_order(&state, "Pepperoni");
+        // Peer is known → receipt is sent → get_recipe fails → Error as frame 2.
+        let (mut client2, mut server2) = make_stream_pair();
+        let response = handle_order(&state, "Pepperoni", &mut server2);
+        // Receipt was written — consume it so the stream stays clean.
+        let _ = read_frame(&mut client2);
         assert!(
-            matches!(response, TcpMessage::OrderDeclined { ref message } if message == "Unknown recipe"),
-            "expected OrderDeclined with 'Unknown recipe', got {response:?}"
+            matches!(response, TcpMessage::Error { .. }),
+            "expected Error when peer unreachable after receipt, got {response:?}"
         );
     }
 
     #[test]
-    fn handle_process_payload_advances_action_when_capable() {
+    fn handle_process_payload_executes_all_capable_actions_and_delivers() {
         let state = build_state(vec!["MakeDough"], vec![]);
         let payload = ProcessPayload {
             order_id: crate::protocol::uuid(uuid::Uuid::nil()),
@@ -364,7 +487,7 @@ mod tests {
                 name: "MakeDough".to_string(),
                 params: HashMap::new(),
             }],
-            content: "payload".to_string(),
+            content: String::new(),
             updates: vec![],
         };
 
@@ -372,16 +495,10 @@ mod tests {
 
         match response {
             TcpMessage::CompletedOrder { result, .. } => {
-                assert_eq!(result, "payload");
+                assert_eq!(result, "Dough: ready\n");
+                // updates: Action + Deliver
             }
-            TcpMessage::ProcessPayload { payload } => {
-                assert_eq!(payload.action_index, 1);
-                assert!(matches!(
-                    payload.updates.last(),
-                    Some(Update::Action { .. })
-                ));
-            }
-            _ => panic!("expected ProcessPayload or CompletedOrder response"),
+            other => panic!("expected CompletedOrder, got {other:?}"),
         }
     }
 
