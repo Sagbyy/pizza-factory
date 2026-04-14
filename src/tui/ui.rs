@@ -1,3 +1,6 @@
+use std::collections::HashSet;
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::Style;
@@ -5,9 +8,12 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
 use tui_logger::{TuiLoggerTargetWidget, TuiLoggerWidget};
 
+use crate::cli::start_tui::StartTuiArgs;
+use crate::node::NodeState;
+use crate::recipe::flatten_recipe;
 use crate::tui::app::{App, Mode};
 
-pub fn render_ui(frame: &mut Frame, app: &App) {
+pub fn render_ui(frame: &mut Frame, app: &App, _args: &StartTuiArgs) {
     let [top, command, logger, help] = Layout::vertical([
         Constraint::Fill(1),
         Constraint::Length(3),
@@ -23,7 +29,7 @@ pub fn render_ui(frame: &mut Frame, app: &App) {
         Layout::horizontal([Constraint::Length(17), Constraint::Fill(1)]).areas(logger);
 
     render_recent_orders_block(frame, left);
-    render_local_agent_status_block(frame, right);
+    render_local_agent_status_block(frame, right, app);
     render_command_block(frame, app, command);
     render_tui_target(frame, app, target);
     render_tui_log(frame, app, log);
@@ -41,9 +47,88 @@ fn render_recent_orders_block(frame: &mut Frame, area: Rect) {
     );
 }
 
-fn render_local_agent_status_block(frame: &mut Frame, area: Rect) {
+fn format_recipes(state: &NodeState) -> String {
+    if state.identity.recipes.is_empty() {
+        return "{}".to_string();
+    }
+
+    let capabilities: HashSet<&str> = state
+        .identity
+        .capabilities
+        .iter()
+        .map(String::as_str)
+        .collect();
+
+    let entries: Vec<String> = state
+        .identity
+        .recipes
+        .iter()
+        .map(|recipe| {
+            let mut seen: HashSet<String> = HashSet::new();
+            let missing: Vec<String> = flatten_recipe(recipe)
+                .into_iter()
+                .map(|a| a.name)
+                .filter(|name| !capabilities.contains(name.as_str()))
+                .filter(|name| seen.insert(name.clone()))
+                .collect();
+            format!("{:?}: Local {{ missing_actions: {:?} }}", recipe.name, missing)
+        })
+        .collect();
+
+    format!("{{{}}}", entries.join(", "))
+}
+
+fn render_local_agent_status_block(frame: &mut Frame, area: Rect, app: &App) {
+    let state = &app.state;
+    let gossip = state.gossip.read().unwrap();
+    let now_us = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_micros() as u64;
+
+    let caps = format!("{:?}", state.identity.capabilities);
+    let recipes_str = format_recipes(state);
+    let version_str = format!("{}#{}", gossip.version.counter, gossip.version.generation);
+
+    let mut lines: Vec<Line> = vec![
+        Line::from(vec![
+            Span::styled("Capabilities: ", Style::new().bold()),
+            Span::raw(caps),
+        ]),
+        Line::from(vec![
+            Span::styled("Recipes: ", Style::new().bold()),
+            Span::raw(recipes_str),
+        ]),
+        Line::from(Span::styled("Peers:", Style::new().bold())),
+        Line::from(Span::styled("Known peers:", Style::new().bold())),
+    ];
+
+    let mut sorted_peers: Vec<_> = gossip.peers.iter().collect();
+    sorted_peers.sort_by_key(|(addr, _)| addr.as_str());
+
+    if sorted_peers.is_empty() {
+        lines.push(Line::from(Span::raw("  (none)")));
+    } else {
+        for (addr, info) in sorted_peers {
+            let elapsed_ms = if info.last_seen_us > 0 {
+                now_us.saturating_sub(info.last_seen_us) / 1000
+            } else {
+                0
+            };
+            let peer_ver = format!("v{}#{}", info.version.counter, info.version.generation);
+            lines.push(Line::from(Span::raw(format!(
+                "  {addr} ({peer_ver} {elapsed_ms} ms ago)"
+            ))));
+        }
+    }
+
+    lines.push(Line::from(vec![
+        Span::styled("Current version: ", Style::new().bold()),
+        Span::raw(version_str),
+    ]));
+
     frame.render_widget(
-        Paragraph::new("").block(
+        Paragraph::new(lines).block(
             Block::bordered()
                 .title("Local Agent Status")
                 .border_style(Style::new().light_cyan()),
@@ -75,7 +160,7 @@ fn render_command_block(frame: &mut Frame, app: &App, area: Rect) {
 
     if matches!(app.mode, Mode::Editing) {
         frame.set_cursor_position((
-            area.x + 3 + app.input.len() as u16, // +1 bordure +2 "> "
+            area.x + 3 + app.input.len() as u16,
             area.y + 1,
         ));
     }

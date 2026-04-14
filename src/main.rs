@@ -71,8 +71,38 @@ fn main() {
             tcp_handle.join().unwrap();
         }
         Commands::StartTui(args) => {
-            println!("Starting TUI server on {:?}...", args);
-            match ratatui::run(tui::app::start_tui) {
+            let state = match node::NodeState::new(&args.start) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("PizzaFactory failed: {e}");
+                    if let Some(cause) = std::error::Error::source(&e) {
+                        eprintln!("\nCaused by:\n    {cause}");
+                    }
+                    std::process::exit(1);
+                }
+            };
+
+            if let Err(e) = server::tcp::start(Arc::clone(&state)) {
+                eprintln!(
+                    "PizzaFactory failed: Failed to start TCP server on {}: {e}",
+                    args.start.host
+                );
+                std::process::exit(1);
+            }
+
+            let socket = UdpSocket::bind(&args.start.host).expect("failed to bind UDP socket");
+            socket
+                .set_read_timeout(Some(std::time::Duration::from_millis(500)))
+                .expect("failed to set UDP socket timeout");
+            let peers = args.start.peers.clone();
+            let udp_state = Arc::clone(&state);
+            thread::spawn(move || {
+                if let Err(e) = run_gossip_service_shared(&socket, udp_state, &peers) {
+                    eprintln!("UDP gossip service stopped unexpectedly: {e}");
+                }
+            });
+
+            match ratatui::run(|terminal| tui::app::start_tui(terminal, args, Arc::clone(&state))) {
                 Ok(_) => println!("TUI server stopped."),
                 Err(e) => {
                     eprintln!("TUI server error: {e}");

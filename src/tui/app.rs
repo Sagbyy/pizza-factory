@@ -1,8 +1,10 @@
+use std::sync::Arc;
+
 use crossterm::event::{Event, KeyCode, KeyEventKind};
 use ratatui::DefaultTerminal;
 use tui_logger::{TuiWidgetEvent, TuiWidgetState};
 
-use crate::tui::ui;
+use crate::{cli::start_tui::StartTuiArgs, node::NodeState, tui::ui};
 
 pub enum Mode {
     Normal,
@@ -13,14 +15,16 @@ pub struct App {
     pub mode: Mode,
     pub input: String,
     pub logger_state: TuiWidgetState,
+    pub state: Arc<NodeState>,
 }
 
 impl App {
-    pub fn new() -> Self {
+    pub fn new(state: Arc<NodeState>) -> Self {
         Self {
             mode: Mode::Normal,
             input: String::new(),
             logger_state: TuiWidgetState::new(),
+            state,
         }
     }
 
@@ -73,13 +77,13 @@ impl App {
     }
 }
 
-pub fn start_tui(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
+pub fn start_tui(terminal: &mut DefaultTerminal, args: StartTuiArgs, state: Arc<NodeState>) -> std::io::Result<()> {
     tui_logger::init_logger(log::LevelFilter::Trace).ok();
     tui_logger::set_default_level(log::LevelFilter::Info);
 
-    let mut app = App::new();
+    let mut app = App::new(state);
     loop {
-        terminal.draw(|frame| ui::render_ui(frame, &app))?;
+        terminal.draw(|frame| ui::render_ui(frame, &app, &args))?;
         let event = crossterm::event::read()?;
         if app.handle_key(event) {
             break Ok(());
