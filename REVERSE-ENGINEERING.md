@@ -108,11 +108,14 @@ Le deuxième agent a ensuite envoyé un ping au premier agent pour vérifier sa 
     "Ping": {
         "last_seen": {
             "tag": 1001,
-            "value": {}
+      "value": {
+        "1": 1776203464,
+        "-6": 732948
+      }
         },
         "version": {
-            "counter": 3,
-            "generation": 1772191739
+      "counter": 1,
+      "generation": 1776203458
         }
     }
 }
@@ -127,11 +130,14 @@ Le premier agent a ensuite répondu au ping du deuxième agent avec un pong, tou
     "Pong": {
         "last_seen": {
             "tag": 1001,
-            "value": {}
+      "value": {
+        "1": 1776203464,
+        "-6": 732948
+      }
         },
         "version": {
-            "counter": 3,
-            "generation": 1772191739
+      "counter": 1,
+      "generation": 1776203458
         }
     }
 }
@@ -146,11 +152,14 @@ Et ici les rôles sont inversés, le premier agent a envoyé un ping au deuxièm
     "Ping": {
         "last_seen": {
             "tag": 1001,
-            "value": {}
+      "value": {
+        "1": 1776203464,
+        "-6": 732840
+      }
         },
         "version": {
             "counter": 1,
-            "generation": 1772192016
+      "generation": 1776203464
         }
     }
 }
@@ -165,15 +174,23 @@ Pareil le deuxième répond et lui renvoie un ping ainsi de suite afin de garant
     "Pong": {
         "last_seen": {
             "tag": 1001,
-            "value": {}
+      "value": {
+        "1": 1776203464,
+        "-6": 732840
+      }
         },
         "version": {
             "counter": 1,
-            "generation": 1772192016
+      "generation": 1776203464
         }
     }
 }
 ```
+
+Dans les traces observees, le `Pong` reprend la valeur `last_seen` du `Ping` correspondant (echo). Le champ `last_seen` transporte une map numerique taggee 1001 dans laquelle :
+
+- `1` represente la composante en secondes Unix.
+- `-6` represente la composante fractionnaire (sous-seconde).
 #### 2.1 Commande list-recipes
 Lancement d'un client, qui se connecte au premier agent :
 ```bash
@@ -296,7 +313,12 @@ Observations interop supplementaires relevees sur le binaire de reference :
 
 - Cette forme `remote.host` doit etre traitee comme equivalente a une disponibilite distante.
 - La forme `local.missing_actions` reste presente pour les recettes locales.
-- Sur UDP, `last_seen` (tag 1001) a ete observe avec des cles string et numeriques selon les versions de binaire.
+- Sur UDP, `last_seen` (tag 1001) est observe sur le binaire de reference avec une map a cles entieres, notamment `1` et `-6`.
+- Interpretation retenue sur les traces :
+  - `1` porte la composante en secondes Unix.
+  - `-6` porte la composante fractionnaire (sous-seconde).
+  - Le timestamp est de la forme `secondes.fraction`.
+- Dans les echanges heartbeat observes, le `Pong` reprend la valeur `last_seen` du `Ping` correspondant (echo de correlation).
 
 - Fermeture de la session TCP
 
