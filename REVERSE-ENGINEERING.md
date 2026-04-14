@@ -188,20 +188,20 @@ Ce port identifie la session TCP et permet au serveur de gérer plusieurs connex
 
   - ```json
     25 58695 → 8000  [SYN]
-  
+
     26 8000  → 58695 [SYN, ACK]
 
     27 58695 → 8000  [ACK]
     ```
     Il s’agit du handshake TCP classique en trois étapes (three-way handshake), utilisé pour établir une connexion fiable entre deux machines.
-    
+
     Le client utilise l’adresse 127.0.0.1 avec un port éphémère 58695. Le serveur écoute sur l’adresse 127.0.0.1 au port 8000
 
 - Première commande TCP
- 
+
   - ```json
     58695 → 8000  [PSH, ACK] Len=4
-    
+
     data: !!binary |
     AAAADQ==
     ```
@@ -220,14 +220,14 @@ Ce port identifie la session TCP et permet au serveur de gérer plusieurs connex
     Après décodage CBOR : "list_recipes". Cette chaîne correspond directement à la commande envoyée par le client
 
 
-- Réponse du serveur sur la taille de la réponse 
+- Réponse du serveur sur la taille de la réponse
 
   - ```json
      8000 → 58695 [PSH, ACK] Len=4
     ```
     La réponse suivante fera 251 octets.
 
- 
+
 - Transfert de données plus important: payload de la réponse
 
   - ```json
@@ -236,7 +236,7 @@ Ce port identifie la session TCP et permet au serveur de gérer plusieurs connex
       oXJyZWNpcGVfbGlzdF9hbnN3ZXKhZ3JlY2lwZXOlZkZ1bmdoaaFlbG9jYWyhb21pc3NpbmdfYWN0aW9uc4FsQWRkTXVzaHJvb21zak1hcmdoZXJpdGGhZWxvY2FsoW9taXNzaW5nX2FjdGlvbnOBaEFkZEJhc2lsaE1hcmluYXJhoWVsb2NhbKFvbWlzc2luZ19hY3Rpb25zgmlBZGRHYXJsaWNqQWRkT3JlZ2Fub2lQZXBwZXJvbmmhZWxvY2FsoW9taXNzaW5nX2FjdGlvbnOAb1F1YXR0cm9Gb3JtYWdnaaFlbG9jYWyhb21pc3NpbmdfYWN0aW9uc4A=
     ```
   Le serveur envoie ici 251 octets au client.
-  Ces données sont encodées sous forme binaire structurée. La réponse après décodage CBOR : 
+  Ces données sont encodées sous forme binaire structurée. La réponse après décodage CBOR :
 
 ```
 {
@@ -279,20 +279,39 @@ Ce port identifie la session TCP et permet au serveur de gérer plusieurs connex
 }
 ```
 
+Observations interop supplementaires relevees sur le binaire de reference :
+
+- Un noeud non proprietaire peut renvoyer des recettes distantes via la forme suivante :
+
+```json
+{
+  "recipe_list_answer": {
+    "recipes": {
+      "Funghi": { "remote": { "host": "127.0.0.1:8000" } },
+      "Margherita": { "remote": { "host": "127.0.0.1:8000" } }
+    }
+  }
+}
+```
+
+- Cette forme `remote.host` doit etre traitee comme equivalente a une disponibilite distante.
+- La forme `local.missing_actions` reste presente pour les recettes locales.
+- Sur UDP, `last_seen` (tag 1001) a ete observe avec des cles string et numeriques selon les versions de binaire.
+
 - Fermeture de la session TCP
 
   - ```json
      58695 → 8000 [FIN, ACK]
-    
+
     ```
-  Le client envoie un message FIN, indiquant qu’il souhaite terminer la communication. 
+  Le client envoie un message FIN, indiquant qu’il souhaite terminer la communication.
   Le serveur accuse réception, et la session TCP est ensuite fermée.
 
 
-- Certaines trames observées correspondent uniquement à des accusés de réception TCP. 
-Ces paquets ne contiennent aucun payload applicatif et sont générés automatiquement 
-par la pile TCP afin de garantir 
-la fiabilité de la transmission. 
+- Certaines trames observées correspondent uniquement à des accusés de réception TCP.
+Ces paquets ne contiennent aucun payload applicatif et sont générés automatiquement
+par la pile TCP afin de garantir
+la fiabilité de la transmission.
 ```json
   58695 → 8000 [ACK]
 ```
@@ -311,7 +330,7 @@ Lancement d'un client, qui se connecte au premier agent :
   data: !!binary |
   oWVvcmRlcqFrcmVjaXBlX25hbWVpUGVwcGVyb25p
   ```
-CBOR décodé: 
+CBOR décodé:
 ```json
 {
   "order": {
@@ -342,7 +361,7 @@ CBOR décodé:
 
 Lorsqu’un client envoie une commande Pepperoni à l’agent 127.0.0.1:8002, l’agent 127.0.0.1:8000 intervient de deux façons:
 ![img_1.png](screenshots/img_9.png)
-  - L’émetteur envoie d’abord un entier de longueur sur 4 octets, suivi d’un message CBOR get_recipe contenant le champ recipe_name = Pepperoni. L’agent 8000 répond avec un message CBOR recipe_answer contenant le champ recipe, 
+  - L’émetteur envoie d’abord un entier de longueur sur 4 octets, suivi d’un message CBOR get_recipe contenant le champ recipe_name = Pepperoni. L’agent 8000 répond avec un message CBOR recipe_answer contenant le champ recipe,
 qui transporte la recette complète sous forme textuelle (l'agent 8000 répond à une requête GetRecipe)
     ![img_8.png](screenshots/img_8.png)
 CBOR décodé de la requête :
@@ -361,8 +380,8 @@ CBOR décodé de la réponse :
   }
 }
   ```
-  - Ensuite, il reçoit un message ProcessPayload, exécute localement l’action MakeDough, 
-puis transmet la suite du traitement à 127.0.0.1:8002 pour l’action suivante AddBase. 
+  - Ensuite, il reçoit un message ProcessPayload, exécute localement l’action MakeDough,
+puis transmet la suite du traitement à 127.0.0.1:8002 pour l’action suivante AddBase.
 Cela montre que l’exécution d’une commande peut être distribuée entre agents, avec transfert explicite du contexte d’exécution.
     ![img.png](screenshots/img_10.png)
     ![img_1.png](screenshots/img_11.png)
@@ -669,10 +688,10 @@ CBOR décodé de ProcessPayload 56305 -> 8002: 8002 exécute AddBase, met à jou
 ```
 et AddPepperonni + Bake.
 
-- Réponse complète du serveur: Le paquet 174 contient un objet CBOR de type completed_order, qui inclut le nom de la recette ainsi qu’un champ result. 
+- Réponse complète du serveur: Le paquet 174 contient un objet CBOR de type completed_order, qui inclut le nom de la recette ainsi qu’un champ result.
 Ce champ semble contenir une chaîne JSON sérialisée décrivant le résultat final de la commande, notamment
-  - l’identifiant, 
-  - le contenu produit, 
+  - l’identifiant,
+  - le contenu produit,
   - les transferts entre nœuds qui font les mises à jour d’exécution (updates). L'analyse du champ "updates" permet d'affirmer que l'agent sur le port 8002 récupère d’abord la recette via un message TCP get_recipe envoyé à 127.0.0.1:8000,
     puis exécute le traitement sous forme d’étapes successives transportées par des messages process_payload. Les messages observés montrent une progression de action_index et un enrichissement progressif de content et updates,
     ce qui indique une délégation de certaines actions à l’agent distant avant reprise du traitement local.
@@ -790,7 +809,7 @@ L’objet dans "result" contient quatre grandes parties :
   ]
 }
   ```
-Résumé: 
+Résumé:
 
 client → 8002 : order("Pepperoni")
 
@@ -848,7 +867,7 @@ La première phase du protocole repose sur un mécanisme de découverte de nœud
 Chaque nœud du réseau diffuse périodiquement des messages afin d’informer les autres nœuds de son adresse réseau, ses capacités, la liste de pairs connus
 
 
-Ces messages correspondent à un mécanisme de type Gossip (ou protocole épidémique): 
+Ces messages correspondent à un mécanisme de type Gossip (ou protocole épidémique):
 - Chaque nœud communique avec un nombre limité de voisins.
 
 - Les informations connues sont échangées et propagées progressivement. Aucune autorité centrale n’est nécessaire
@@ -875,13 +894,13 @@ Les messages observés dans cette phase comprennent notamment :
 
 - generation
 
-2. Ping / Pong : Messages de heartbeat permettant de vérifier que les pairs sont toujours actifs. 
+2. Ping / Pong : Messages de heartbeat permettant de vérifier que les pairs sont toujours actifs.
 Ces messages servent à maintenir une vision cohérente du réseau.
 
 UDP permet une connexion rapide, continuelle, et tolérant quelques pertes de données. Les noeuds se découvrent et propagent des informations
 de manière rapide avec ce protocole.
 
-La liste des pairs est progressivement enrichie. Un noeud peut choisir le pair apte à exécuter un service.  
+La liste des pairs est progressivement enrichie. Un noeud peut choisir le pair apte à exécuter un service.
 Il établit une connexion TCP vers le pair approprié, qui devient le service applicatif endpoint.
 
 ### Phase 2 : Exécution des commandes (TCP)
@@ -928,6 +947,6 @@ Cette phase correspond à la production ou exécution effective des tâches du s
     - **Efficace** : l’encodage/décodage est rapide, ce qui limite la surcharge côté client et côté serveur.
     - **Typé** : CBOR gère nativement des types riches (entiers, chaînes, tableaux, objets, tags, etc.), ce qui permet de préserver la structure des messages.
 
-Concrètement, au lieu d’envoyer un corps de requête en JSON (`{"clé": "valeur"}`), chaque agent envoie l’équivalent **encodé en CBOR**.  
+Concrètement, au lieu d’envoyer un corps de requête en JSON (`{"clé": "valeur"}`), chaque agent envoie l’équivalent **encodé en CBOR**.
 Les extraits JSON ci‑dessous sont donc une **représentation lisible** de la charge utile CBOR décodée (par exemple via Wireshark), pas le contenu exact transporté sur le fil.
 

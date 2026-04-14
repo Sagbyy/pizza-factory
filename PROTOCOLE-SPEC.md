@@ -9,7 +9,7 @@ Le système repose sur une architecture pair-à-pair décentralisée. Chaque age
 | Découverte | UDP | Propagation gossip (Announce, Ping, Pong) |
 | Commandes | TCP | Exécution des ordres client (list-recipes, order, ...) |
 
-Tous les messages sont sérialisés en **CBOR** (*Concise Binary Object Representation*).  
+Tous les messages sont sérialisés en **CBOR** (*Concise Binary Object Representation*).
 Les exemples JSON ci-dessous sont des représentations lisibles des charges utiles CBOR décodées.
 
 ---
@@ -77,7 +77,7 @@ Représentation fil (exemple UUID) :
 | `capabilities` | `Vec<String>` | Actions que cet agent peut exécuter |
 | `recipes` | `Vec<String>` | Noms des recettes connues (noms seuls, pas le contenu) |
 | `peers` | `Vec<Tagged<String>>` (tag 260) | Pairs connus par cet agent |
-| `version.counter` | `u64` | Compteur logique, incrémenté à chaque annonce |
+| `version.counter` | `u64` | Compteur logique monotone (peut rester stable entre deux annonces) |
 | `version.generation` | `u64` | Timestamp Unix de démarrage, distingue les redémarrages |
 
 ### 2.3 Messages `Ping` / `Pong`
@@ -102,8 +102,12 @@ Représentation fil (exemple UUID) :
 }
 ```
 
-Le destinataire d'un `Ping` répond par un `Pong` avec sa propre version.  
-`last_seen` est une carte `adresse → timestamp_µs` des derniers messages reçus de chaque pair.
+Le destinataire d'un `Ping` répond par un `Pong` avec sa propre version.
+`last_seen` est transporté via le tag 1001 et admet des variantes de forme selon l'implémentation observée :
+- carte `adresse_string -> timestamp`
+- carte `id_numerique -> timestamp`
+
+Les deux formes doivent être acceptées en désérialisation pour garantir l'interopérabilité.
 
 ### 2.4 Séquence de démarrage (2 nœuds)
 
@@ -206,8 +210,25 @@ La charge utile CBOR est la chaîne `"list_recipes"` (pas d'objet enveloppant).
 }
 ```
 
-`missing_actions` liste les actions de la recette que cet agent ne peut pas exécuter lui-même.  
+Chaque entrée de `recipes` est une disponibilité encodée en variante :
+- `local` : la recette est disponible localement, avec `missing_actions`.
+- `remote` : la recette est connue via un pair, avec `host`.
+
+`missing_actions` liste les actions de la recette que cet agent ne peut pas exécuter lui-même.
 Si la liste est vide, l'agent peut traiter la recette seul.
+
+Exemple uniquement distant :
+
+```json
+{
+  "recipe_list_answer": {
+    "recipes": {
+      "Funghi": { "remote": { "host": "127.0.0.1:8000" } },
+      "Margherita": { "remote": { "host": "127.0.0.1:8000" } }
+    }
+  }
+}
+```
 
 ### 4.4 `order`
 
