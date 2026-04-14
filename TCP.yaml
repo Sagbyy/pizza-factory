@@ -76,61 +76,74 @@ packets:
       oWRob3N02QEEbjEyNy4wLjAuMTo4MDAwb1F1YXR0cm9Gb3JtYWdnaaFmcmVtb3RloWRob3N02QEE
       bjEyNy4wLjAuMTo4MDAw
 
-
-# TCP when nothings happens
+# get-recipe from local
 peers:
   - peer: 0
     host: 127.0.0.1
-    port: 65154
+    port: 62610
   - peer: 1
     host: 127.0.0.1
-    port: 65153
+    port: 8000
 packets:
-  - packet: 17
+  - packet: 190
     peer: 0
     index: 0
-    timestamp: 1776206369.691658400
+    timestamp: 1776207431.645372900
     data: !!binary |
-      TQ==
-  - packet: 19
+      AAAAJA==
+  - packet: 192
     peer: 0
     index: 1
-    timestamp: 1776206369.691789100
+    timestamp: 1776207431.645403400
     data: !!binary |
-      TQ==
-  - packet: 21
+      oWpnZXRfcmVjaXBloWtyZWNpcGVfbmFtZWpNYXJnaGVyaXRh
+  - packet: 194
+    peer: 1
+    index: 0
+    timestamp: 1776207431.645675800
+    data: !!binary |
+      AAAAnA==
+  - packet: 196
+    peer: 1
+    index: 1
+    timestamp: 1776207431.645722300
+    data: !!binary |
+      oW1yZWNpcGVfYW5zd2VyoWZyZWNpcGV4g01hcmdoZXJpdGEgPSBNYWtlRG91Z2ggLT4gQWRkQmFz
+      ZShiYXNlX3R5cGU9dG9tYXRvKSAtPiBbQWRkQ2hlZXNlKGFtb3VudD0yKSwgQWRkQmFzaWwobGVh
+      dmVzPTMpXSAtPiBCYWtlKGR1cmF0aW9uPTUpIC0+IEFkZE9saXZlT2ls
+
+# get-recipe from distant
+peers:
+  - peer: 0
+    host: 127.0.0.1
+    port: 62655
+  - peer: 1
+    host: 127.0.0.1
+    port: 8001
+packets:
+  - packet: 26
     peer: 0
-    index: 2
-    timestamp: 1776206369.691819100
+    index: 0
+    timestamp: 1776207539.293017700
     data: !!binary |
-      TQ==
-  - packet: 23
+      AAAAJA==
+  - packet: 28
     peer: 0
-    index: 3
-    timestamp: 1776206369.691836800
+    index: 1
+    timestamp: 1776207539.293039600
     data: !!binary |
-      TQ==
-  - packet: 25
-    peer: 0
-    index: 4
-    timestamp: 1776206369.691935700
+      oWpnZXRfcmVjaXBloWtyZWNpcGVfbmFtZWpNYXJnaGVyaXRh
+  - packet: 43
+    peer: 1
+    index: 0
+    timestamp: 1776207539.293935900
     data: !!binary |
-      TQ==
-  - packet: 27
-    peer: 0
-    index: 5
-    timestamp: 1776206369.691974900
+      AAAAnA==
+  - packet: 45
+    peer: 1
+    index: 1
+    timestamp: 1776207539.294015900
     data: !!binary |
-      TQ==
-  - packet: 29
-    peer: 0
-    index: 6
-    timestamp: 1776206369.691996100
-    data: !!binary |
-      TQ==
-  - packet: 31
-    peer: 0
-    index: 7
-    timestamp: 1776206369.692030800
-    data: !!binary |
-      TQ==
+      oW1yZWNpcGVfYW5zd2VyoWZyZWNpcGV4g01hcmdoZXJpdGEgPSBNYWtlRG91Z2ggLT4gQWRkQmFz
+      ZShiYXNlX3R5cGU9dG9tYXRvKSAtPiBbQWRkQ2hlZXNlKGFtb3VudD0yKSwgQWRkQmFzaWwobGVh
+      dmVzPTMpXSAtPiBCYWtlKGR1cmF0aW9uPTUpIC0+IEFkZE9saXZlT2ls

@@ -304,6 +304,8 @@ Chaque entrée de `recipes` est une disponibilité encodée en variante :
 
 `missing_actions` liste les actions de la recette que cet agent ne peut pas exécuter lui-même.
 Si la liste est vide, l'agent peut traiter la recette seul.
+Quand une recette est annoncée par plusieurs pairs, la réponse peut aussi exposer plusieurs hôtes distants pour la même recette.
+Le client utilise ensuite l'un de ces hôtes pour demander `get_recipe`.
 
 Exemple uniquement distant :
 
@@ -378,7 +380,8 @@ Le champ `result` est une **chaîne JSON sérialisée** (pas un objet CBOR imbri
 
 ### 4.8 `get_recipe` / `recipe_answer`
 
-Échange agent-à-agent. L'agent demandeur ne possède pas le fichier de recettes.
+Échange direct entre le client et le nœud qui détient la recette, qu'elle soit locale au nœud cible ou connue via `list_recipes`.
+Le schéma de requête et de réponse reste identique dans les deux cas ; seul le peer ciblé change.
 
 ```json
 { "get_recipe": { "recipe_name": "Pepperoni" } }
