@@ -31,11 +31,6 @@ pub fn addr(value: impl Into<String>) -> NodeAddr {
     Required(value.into())
 }
 
-/// Creates a tagged last-seen map value.
-pub fn last_seen(value: HashMap<String, u64>) -> TaggedLastSeen {
-    Required(LastSeenMap::ByAddress(value))
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 /// Monotonic version tuple used by gossip messages.
 pub struct Version {
@@ -284,7 +279,7 @@ mod tests {
         let mut last_seen_map = HashMap::new();
         last_seen_map.insert("127.0.0.1:8002".to_string(), 1_773_591_739);
         let check: Check = Check {
-            last_seen: last_seen(last_seen_map),
+            last_seen: Required(LastSeenMap::ByAddress(last_seen_map)),
             version: Version {
                 counter: 1,
                 generation: 12345,
