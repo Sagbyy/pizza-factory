@@ -119,8 +119,12 @@ fn render_local_agent_status_block(frame: &mut Frame, area: Rect, app: &App) {
                 0
             };
             let peer_ver = format!("v{}#{}", info.version.counter, info.version.generation);
+            let ping_str = match info.rtt_us {
+                Some(rtt) => format!("{:.1} ms", rtt as f64 / 1000.0),
+                None => format!("{} ms ago", elapsed_ms),
+            };
             lines.push(Line::from(Span::raw(format!(
-                "  {addr} ({peer_ver} {elapsed_ms} ms ago)"
+                "  {addr} ({peer_ver} {ping_str})"
             ))));
         }
     }

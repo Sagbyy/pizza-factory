@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::io::Result;
 use std::net::{SocketAddr, UdpSocket};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::node::{NodeState, PeerInfo};
 use crate::protocol::{Announce, Check, UdpMessage, Version, from_cbor, to_cbor};
@@ -77,6 +77,7 @@ pub fn run_gossip_service_shared(
 
     loop {
         gossip_tick_shared(socket, &node_state)?;
+        std::thread::sleep(Duration::from_secs(1));
     }
 }
 
@@ -117,16 +118,26 @@ pub fn send_ping_to_known_peers_shared(
         gossip.peers.keys().cloned().collect()
     };
 
-    let mut sent = 0usize;
+    let mut sent_addrs = Vec::new();
     for peer_addr in peer_addrs {
         if peer_addr == node_state.identity.addr {
             continue;
         }
         send_udp_message(socket, &ping, &peer_addr)?;
-        sent += 1;
+        sent_addrs.push(peer_addr.clone());
     }
 
-    Ok(sent)
+    let t0 = now_micros();
+    {
+        let mut gossip = node_state.gossip.write().unwrap();
+        for addr in &sent_addrs {
+            if let Some(peer) = gossip.peers.get_mut(addr) {
+                peer.ping_sent_us = Some(t0);
+            }
+        }
+    }
+
+    Ok(sent_addrs.len())
 }
 
 /// Reads and handles a single incoming UDP datagram.
@@ -199,6 +210,15 @@ pub fn handle_udp_message_shared(
             Some(build_pong_from_node(node_state))
         }
         UdpMessage::Pong(check) => {
+            {
+                let mut gossip = node_state.gossip.write().unwrap();
+                if let Some(peer) = gossip.peers.get_mut(peer_addr) {
+                    if let Some(sent) = peer.ping_sent_us {
+                        peer.rtt_us = Some(now_micros().saturating_sub(sent));
+                        peer.ping_sent_us = None;
+                    }
+                }
+            }
             apply_check_shared(node_state, peer_addr, check);
             None
         }
@@ -207,7 +227,7 @@ pub fn handle_udp_message_shared(
 
 fn build_announce_from_node(node_state: &Arc<NodeState>, peers: Vec<String>) -> UdpMessage {
     let version = {
-        let gossip = node_state.gossip.read().unwrap();
+        let gossip = node_state.gossip.write().unwrap();
         gossip.version.clone()
     };
 
