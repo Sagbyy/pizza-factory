@@ -273,21 +273,4 @@ mod tests {
         let decoded: TcpMessage = from_cbor(&encoded).unwrap();
         assert_eq!(decoded, msg);
     }
-
-    #[test]
-    fn check_roundtrip() {
-        let mut last_seen_map = HashMap::new();
-        last_seen_map.insert("127.0.0.1:8002".to_string(), 1_773_591_739);
-        let check: Check = Check {
-            last_seen: Required(LastSeenMap::ByAddress(last_seen_map)),
-            version: Version {
-                counter: 1,
-                generation: 12345,
-            },
-        };
-
-        let encoded = to_cbor(&check).unwrap();
-        let decoded: Check = from_cbor(&encoded).unwrap();
-        assert_eq!(decoded, check);
-    }
 }

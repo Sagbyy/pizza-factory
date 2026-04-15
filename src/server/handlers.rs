@@ -224,32 +224,31 @@ fn forward_to_peer(peer: &str, message: &TcpMessage) -> Result<TcpMessage, Strin
     Ok(response)
 }
 
-fn try_forward_order(recipe_name: &str, candidate_peers: &[String]) -> Option<TcpMessage> {
-    let forwarded = TcpMessage::Order {
-        recipe_name: recipe_name.to_string(),
-    };
-
+fn try_forward(message: &TcpMessage, candidate_peers: &[String]) -> Option<TcpMessage> {
     for peer in candidate_peers {
-        if let Ok(response) = forward_to_peer(peer, &forwarded) {
+        if let Ok(response) = forward_to_peer(peer, message) {
             return Some(response);
         }
     }
-
     None
 }
 
+fn try_forward_order(recipe_name: &str, candidate_peers: &[String]) -> Option<TcpMessage> {
+    try_forward(
+        &TcpMessage::Order {
+            recipe_name: recipe_name.to_string(),
+        },
+        candidate_peers,
+    )
+}
+
 fn try_forward_get_recipe(recipe_name: &str, candidate_peers: &[String]) -> Option<TcpMessage> {
-    let forwarded = TcpMessage::GetRecipe {
-        recipe_name: recipe_name.to_string(),
-    };
-
-    for peer in candidate_peers {
-        if let Ok(response) = forward_to_peer(peer, &forwarded) {
-            return Some(response);
-        }
-    }
-
-    None
+    try_forward(
+        &TcpMessage::GetRecipe {
+            recipe_name: recipe_name.to_string(),
+        },
+        candidate_peers,
+    )
 }
 
 fn try_forward_payload(payload: &ProcessPayload, candidate_peers: &[String]) -> Option<TcpMessage> {
