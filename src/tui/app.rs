@@ -77,7 +77,11 @@ impl App {
     }
 }
 
-pub fn start_tui(terminal: &mut DefaultTerminal, args: StartTuiArgs, state: Arc<NodeState>) -> std::io::Result<()> {
+pub fn start_tui(
+    terminal: &mut DefaultTerminal,
+    args: StartTuiArgs,
+    state: Arc<NodeState>,
+) -> std::io::Result<()> {
     tui_logger::init_logger(log::LevelFilter::Trace).ok();
     tui_logger::set_default_level(log::LevelFilter::Info);
 

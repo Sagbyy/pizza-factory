@@ -71,7 +71,10 @@ fn format_recipes(state: &NodeState) -> String {
                 .filter(|name| !capabilities.contains(name.as_str()))
                 .filter(|name| seen.insert(name.clone()))
                 .collect();
-            format!("{:?}: Local {{ missing_actions: {:?} }}", recipe.name, missing)
+            format!(
+                "{:?}: Local {{ missing_actions: {:?} }}",
+                recipe.name, missing
+            )
         })
         .collect();
 
@@ -159,10 +162,7 @@ fn render_command_block(frame: &mut Frame, app: &App, area: Rect) {
     );
 
     if matches!(app.mode, Mode::Editing) {
-        frame.set_cursor_position((
-            area.x + 3 + app.input.len() as u16,
-            area.y + 1,
-        ));
+        frame.set_cursor_position((area.x + 3 + app.input.len() as u16, area.y + 1));
     }
 }
 
