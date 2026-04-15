@@ -208,7 +208,11 @@ fn now_micros() -> u64 {
 }
 
 fn forward_to_peer(peer: &str, message: &TcpMessage) -> Result<TcpMessage, String> {
-    let mut stream = TcpStream::connect(peer).map_err(|e| format!("connect {peer}: {e}"))?;
+    let addr: std::net::SocketAddr = peer
+        .parse()
+        .map_err(|e| format!("invalid peer address {peer}: {e}"))?;
+    let mut stream = TcpStream::connect_timeout(&addr, Duration::from_millis(500))
+        .map_err(|e| format!("connect {peer}: {e}"))?;
     stream
         .set_read_timeout(Some(Duration::from_millis(500)))
         .map_err(|e| format!("set read timeout: {e}"))?;
@@ -319,6 +323,15 @@ mod tests {
         assert!(matches!(response, TcpMessage::OrderReceipt { .. }));
     }
 
+    /// Bind to an ephemeral port then immediately drop the listener.
+    /// The OS will refuse new connections to that port → reliably unreachable.
+    fn closed_addr() -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        drop(listener);
+        addr
+    }
+
     #[test]
     fn handle_order_declines_when_recipe_unknown_or_unreachable() {
         // Case 1: no peer knows the recipe
@@ -329,11 +342,12 @@ mod tests {
             "expected OrderDeclined with 'Unknown recipe', got {response:?}"
         );
 
-        // Case 2: a peer claims to know the recipe but is unreachable
+        // Case 2: a peer claims to know the recipe but the port is closed (unreachable)
+        let unreachable = closed_addr();
         {
             let mut gossip = state.gossip.write().unwrap();
             gossip.peers.insert(
-                "127.0.0.1:8002".to_string(),
+                unreachable,
                 PeerInfo {
                     capabilities: vec!["Bake".to_string()],
                     recipes: vec!["Pepperoni".to_string()],
