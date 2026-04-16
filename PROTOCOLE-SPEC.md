@@ -52,7 +52,7 @@ Représentation fil (exemple UUID) :
 
 ### 2.2 Message `Announce`
 
-Émis par un agent pour s'annoncer au réseau. Déclenché au démarrage et périodiquement.
+Émis par un agent pour s'annoncer au réseau. Déclenché au démarrage, puis lors de la détection d'un nouveau pair (annonce en réponse).
 
 ```json
 {
