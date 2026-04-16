@@ -23,7 +23,7 @@ Chaque agent écoute sur un port UDP différent (`8000` et `8002`) et échange d
 
 Voici les en‑têtes des paquets échangés entre les deux agents, vus dans Wireshark, avec la charge utile décodée (la partie JSON est une **vue décodée du CBOR**).
 
-![Headers Wireshark](./doc/images/header-wireshark.png)
+![Headers Wireshark](screenshots/header-wireshark.png)
 
 La capture réseau complète utilisée pour cet exemple est disponible dans le dépôt :
 
@@ -669,7 +669,148 @@ CBOR décodé de ProcessPayload 56305 -> 8002: 8002 exécute AddBase, met à jou
 ```
 et AddPepperonni + Bake.
 
-- Réponse complète du serveur: Le paquet 174 contient un objet CBOR de type completed_order, qui inclut le nom de la recette ainsi qu’un champ result. 
+- Quand le payload était complet, un message 'deliver' a été transféré à l'agent designé par 'delivery_host'. 
+Ce message continent le payload de l'exécution finale et le contenu complet. 
+- Pour voir quel agent responsable de l'envoi du message 'deliver', on a regardé les logs de CLI des 2 agents
+dans le scénario où l'agent 8000 recevait la commande.
+- Conclusion: l'agent qui termine le dernier étape est probablement responsable de l'envoi du message 'deliver'
+à l'agent qui a reçu la commande du client. 
+
+![img.png](screenshots/img20.png)
+
+```json
+{
+  "deliver": {
+    "payload": {
+      "order_id": {
+        "value": "6a8100fd-738a-4628-8232-8b78e5aade67",
+        "tag": 37
+      },
+      "order_timestamp": "1773599028742680",
+      "delivery_host": {
+        "value": "127.0.0.1:8002",
+        "tag": 260
+      },
+      "action_index": 5,
+      "action_sequence": [
+        {
+          "name": "MakeDough",
+          "params": {}
+        },
+        {
+          "name": "AddBase",
+          "params": {
+            "base_type": "tomato"
+          }
+        },
+        {
+          "name": "AddCheese",
+          "params": {
+            "amount": "2"
+          }
+        },
+        {
+          "name": "AddPepperoni",
+          "params": {
+            "slices": "12"
+          }
+        },
+        {
+          "name": "Bake",
+          "params": {
+            "duration": "6"
+          }
+        }
+      ],
+      "content": "Dough + Base(tomato): ready\nCheese x2\nPepperoni slices x12\nBaked(6)\n",
+      "updates": [
+        {
+          "Forward": {
+            "to": {
+              "value": "127.0.0.1:8000",
+              "tag": 260
+            },
+            "timestamp": "1773599028758515"
+          }
+        },
+        {
+          "Action": {
+            "action": {
+              "name": "MakeDough",
+              "params": {}
+            },
+            "timestamp": "1773599028760016"
+          }
+        },
+        {
+          "Forward": {
+            "to": {
+              "value": "127.0.0.1:8002",
+              "tag": 260
+            },
+            "timestamp": "1773599028761316"
+          }
+        },
+        {
+          "Action": {
+            "action": {
+              "name": "AddBase",
+              "params": {
+                "base_type": "tomato"
+              }
+            },
+            "timestamp": "1773599028762356"
+          }
+        },
+        {
+          "Action": {
+            "action": {
+              "name": "AddCheese",
+              "params": {
+                "amount": "2"
+              }
+            },
+            "timestamp": "1773599028763201"
+          }
+        },
+        {
+          "Action": {
+            "action": {
+              "name": "AddPepperoni",
+              "params": {
+                "slices": "12"
+              }
+            },
+            "timestamp": "1773599028764251"
+          }
+        },
+        {
+          "Action": {
+            "action": {
+              "name": "Bake",
+              "params": {
+                "duration": "6"
+              }
+            },
+            "timestamp": "1773599028789713"
+          }
+        },
+        {
+          "Forward": {
+            "to": {
+              "value": "127.0.0.1:8002",
+              "tag": 260
+            },
+            "timestamp": "1773599028803833"
+          }
+        }
+      ]
+    },
+    "error": null
+  }
+}
+```
+- Réponse complète du serveur, de l'agent delivery_host au client: Le paquet 174 contient un objet CBOR de type completed_order, qui inclut le nom de la recette ainsi qu’un champ result. 
 Ce champ semble contenir une chaîne JSON sérialisée décrivant le résultat final de la commande, notamment
   - l’identifiant, 
   - le contenu produit, 
@@ -678,7 +819,10 @@ Ce champ semble contenir une chaîne JSON sérialisée décrivant le résultat f
     ce qui indique une délégation de certaines actions à l’agent distant avant reprise du traitement local.
   - la livraison finale.
 
-  CBOR décodé:
+![img.png](screenshots/img21.png)
+  
+
+CBOR décodé:
 ```json
 {
   "completed_order": {
@@ -807,9 +951,10 @@ client → 8002 : order("Pepperoni")
 8000 → 8002 : retour d’un process_payload mis à jour
 
 8002 continue AddBase, AddCheese, AddPepperoni, Bake
-
+8002 → 8002 : deliver - car il est l'agent exécutant le dernier étape et l'agent recevant la commande du client.
 8002 → client : completed_order(...)
-![img.png](screenshots/img17.png)
+
+![img.png](screenshots/img22.png)
 
 Quand un client essaie de commander une pizza qui n'est pas dans la liste des recettes:
 ![img.png](screenshots/img_19.png)

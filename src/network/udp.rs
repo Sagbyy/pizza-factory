@@ -321,7 +321,7 @@ fn apply_check_shared(node_state: &Arc<NodeState>, peer_addr: &str, check: &Chec
 mod tests {
     use super::*;
     use crate::node::{GossipState as NodeGossipState, Identity, NodeState};
-    use std::sync::{Arc, RwLock};
+    use std::sync::{Arc, Mutex, RwLock};
 
     fn build_shared_state(addr: &str, capabilities: Vec<String>) -> Arc<NodeState> {
         Arc::new(NodeState {
@@ -337,6 +337,7 @@ mod tests {
                     generation: now_secs(),
                 },
             }),
+            pending_orders: Mutex::new(HashMap::new()),
         })
     }
 

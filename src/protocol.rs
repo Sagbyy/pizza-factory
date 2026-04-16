@@ -225,6 +225,10 @@ pub enum TcpMessage {
     OrderDeclined {
         message: String,
     },
+    Deliver {
+        payload: ProcessPayload,
+        error: Option<String>,
+    },
     Error {
         message: String,
     },

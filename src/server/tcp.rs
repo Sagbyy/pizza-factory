@@ -57,12 +57,20 @@ fn handle_connection(mut stream: TcpStream, state: Arc<NodeState>) {
         }
     };
 
+    // `Deliver` is fire-and-forget: the sender closes immediately after writing.
+    // Writing a response back would cause os error 10053 (WSAECONNABORTED).
+    if let TcpMessage::Deliver { payload, error } = msg {
+        handlers::handle_deliver(&state, payload, error);
+        return;
+    }
+
     // Order writes frame 1 (OrderReceipt) directly onto the stream, then
     // returns frame 2 (CompletedOrder / Error / OrderDeclined) to us.
-    let response = if let TcpMessage::Order { recipe_name } = &msg {
-        handlers::handle_order(&state, recipe_name, &mut stream)
-    } else {
-        dispatch(msg, &state)
+    let response = match msg {
+        TcpMessage::Order { recipe_name } => {
+            handlers::handle_order(&state, &recipe_name, &mut stream)
+        }
+        other => dispatch(other, &state),
     };
 
     let response_bytes = match to_cbor(&response) {
@@ -82,8 +90,16 @@ fn handle_connection(mut stream: TcpStream, state: Arc<NodeState>) {
 fn dispatch(msg: TcpMessage, state: &NodeState) -> TcpMessage {
     match msg {
         TcpMessage::ListRecipes => handlers::handle_list_recipes(state),
-        TcpMessage::GetRecipe { recipe_name } => handlers::handle_get_recipe(state, &recipe_name),
-        TcpMessage::ProcessPayload { payload } => handlers::handle_process_payload(state, "unknown", payload),
+        TcpMessage::GetRecipe { recipe_name } => {
+            log::debug!("Received GetRecipe recipe={}", recipe_name);
+            handlers::handle_get_recipe(state, &recipe_name)
+        }
+        TcpMessage::ProcessPayload { payload } => {
+            handlers::handle_process_payload(state, "unknown", payload)
+        }
+        TcpMessage::Deliver { payload, error } => {
+            handlers::handle_deliver(state, payload, error)
+        }
         _ => TcpMessage::Error {
             message: "unexpected message type".into(),
         },
