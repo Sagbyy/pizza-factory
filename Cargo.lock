@@ -1057,6 +1057,7 @@ dependencies = [
  "log",
  "ratatui",
  "serde",
+ "serde_json",
  "tui-logger",
  "uuid",
 ]

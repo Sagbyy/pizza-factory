@@ -87,6 +87,19 @@ pub struct ProcessPayload {
     pub updates: Vec<Update>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+/// Subset of `ProcessPayload` returned to the client as a JSON string in `CompletedOrder.result`.
+pub struct OrderResult {
+    /// Stable order identifier across all hops.
+    pub order_id: TaggedUuid,
+    /// Creation time of the order in Unix microseconds.
+    pub order_timestamp: u64,
+    /// Human-readable pizza description accumulated by actions.
+    pub content: String,
+    /// Append-only execution trace (Forward / Action / Deliver).
+    pub updates: Vec<Update>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 /// Gossip announcement broadcast by a node.
 pub struct Announce {
@@ -211,6 +224,10 @@ pub enum TcpMessage {
     },
     OrderDeclined {
         message: String,
+    },
+    Deliver {
+        payload: ProcessPayload,
+        error: Option<String>,
     },
     Error {
         message: String,

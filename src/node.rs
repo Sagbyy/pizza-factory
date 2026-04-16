@@ -1,6 +1,9 @@
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
+use std::sync::mpsc::SyncSender;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+use crate::protocol::TcpMessage;
 
 use crate::cli::start::StartArgs;
 use crate::protocol::Version;
@@ -96,6 +99,10 @@ pub struct NodeState {
     pub identity: Identity,
     /// Mutable gossip state — owned by the UDP layer, read by TCP.
     pub gossip: RwLock<GossipState>,
+    /// Channels waiting for a `deliver` message, keyed by order UUID string.
+    /// `handle_order` inserts a sender before starting execution; `handle_deliver`
+    /// removes it and sends the completed order back.
+    pub pending_orders: Mutex<HashMap<String, SyncSender<TcpMessage>>>,
 }
 
 impl NodeState {
@@ -121,6 +128,7 @@ impl NodeState {
         Ok(Arc::new(NodeState {
             identity,
             gossip: RwLock::new(gossip),
+            pending_orders: Mutex::new(HashMap::new()),
         }))
     }
 }
