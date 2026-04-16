@@ -83,7 +83,7 @@ fn dispatch(msg: TcpMessage, state: &NodeState) -> TcpMessage {
     match msg {
         TcpMessage::ListRecipes => handlers::handle_list_recipes(state),
         TcpMessage::GetRecipe { recipe_name } => handlers::handle_get_recipe(state, &recipe_name),
-        TcpMessage::ProcessPayload { payload } => handlers::handle_process_payload(state, payload),
+        TcpMessage::ProcessPayload { payload } => handlers::handle_process_payload(state, "unknown", payload),
         _ => TcpMessage::Error {
             message: "unexpected message type".into(),
         },

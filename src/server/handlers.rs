@@ -6,7 +6,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::network::tcp::{read_frame, write_frame};
 use crate::node::NodeState;
 use crate::protocol::{
-    ProcessPayload, RecipeAvailability, RecipeStatus, TcpMessage, Update, from_cbor, to_cbor,
+    OrderResult, ProcessPayload, RecipeAvailability, RecipeStatus, TcpMessage, Update, from_cbor,
+    to_cbor,
 };
 use crate::recipe::{flatten_recipe, parse_recipes};
 use uuid::Uuid;
@@ -204,7 +205,7 @@ pub fn handle_order(state: &NodeState, recipe_name: &str, stream: &mut TcpStream
         updates: vec![],
     };
 
-    handle_process_payload(state, payload)
+    handle_process_payload(state, recipe_name, payload)
 }
 
 /// Execute actions in a payload loop until this node can no longer proceed,
@@ -215,15 +216,18 @@ pub fn handle_order(state: &NodeState, recipe_name: &str, stream: &mut TcpStream
 /// exceeds local capabilities the payload is forwarded to a peer that has it.
 /// When all actions are done a `Deliver` update is appended and `CompletedOrder`
 /// is returned.
-pub fn handle_process_payload(state: &NodeState, mut payload: ProcessPayload) -> TcpMessage {
+///
+/// `recipe_name` is used to label the `CompletedOrder`. Pass `"unknown"` when
+/// the name is not available (e.g. inter-agent `ProcessPayload` hops).
+pub fn handle_process_payload(state: &NodeState, recipe_name: &str, mut payload: ProcessPayload) -> TcpMessage {
     loop {
         let idx = payload.action_index as usize;
 
         if idx >= payload.action_sequence.len() {
             payload.updates.push(Update::Deliver { timestamp: now_micros() });
             return TcpMessage::CompletedOrder {
-                recipe_name: "unknown".into(),
-                result: build_result(&payload.content),
+                recipe_name: recipe_name.to_string(),
+                result: build_result(&payload),
             };
         }
 
@@ -301,9 +305,15 @@ fn apply_action(action: &crate::protocol::ActionDef, current_content: &str) -> S
     format!("{current_content}{line}")
 }
 
-/// Serialize the accumulated pizza content as the completed order result.
-fn build_result(content: &str) -> String {
-    content.to_owned()
+/// Serialize the completed payload into the JSON string stored in `CompletedOrder.result`.
+fn build_result(payload: &ProcessPayload) -> String {
+    let order_result = OrderResult {
+        order_id: payload.order_id.clone(),
+        order_timestamp: payload.order_timestamp,
+        content: payload.content.clone(),
+        updates: payload.updates.clone(),
+    };
+    serde_json::to_string_pretty(&order_result).unwrap_or_else(|_| payload.content.clone())
 }
 
 fn now_micros() -> u64 {
@@ -316,10 +326,10 @@ fn now_micros() -> u64 {
 fn forward_to_peer(peer: &str, message: &TcpMessage) -> Result<TcpMessage, String> {
     let mut stream = TcpStream::connect(peer).map_err(|e| format!("connect {peer}: {e}"))?;
     stream
-        .set_read_timeout(Some(Duration::from_millis(500)))
+        .set_read_timeout(Some(Duration::from_secs(10)))
         .map_err(|e| format!("set read timeout: {e}"))?;
     stream
-        .set_write_timeout(Some(Duration::from_millis(500)))
+        .set_write_timeout(Some(Duration::from_secs(10)))
         .map_err(|e| format!("set write timeout: {e}"))?;
 
     let bytes = to_cbor(message).map_err(|e| format!("encode request: {e}"))?;
@@ -491,12 +501,15 @@ mod tests {
             updates: vec![],
         };
 
-        let response = handle_process_payload(&state, payload);
+        let response = handle_process_payload(&state, "TestRecipe", payload);
 
         match response {
-            TcpMessage::CompletedOrder { result, .. } => {
-                assert_eq!(result, "Dough: ready\n");
-                // updates: Action + Deliver
+            TcpMessage::CompletedOrder { result, recipe_name, .. } => {
+                assert_eq!(recipe_name, "TestRecipe");
+                // result is a JSON string — verify it contains the expected content
+                assert!(result.contains("Dough: ready"), "content missing from result: {result}");
+                assert!(result.contains("order_id"), "order_id missing from result: {result}");
+                assert!(result.contains("updates"), "updates missing from result: {result}");
             }
             other => panic!("expected CompletedOrder, got {other:?}"),
         }
@@ -534,7 +547,7 @@ mod tests {
             updates: vec![],
         };
 
-        let response = handle_process_payload(&state, payload);
+        let response = handle_process_payload(&state, "TestRecipe", payload);
 
         match response {
             TcpMessage::Error { message } => {

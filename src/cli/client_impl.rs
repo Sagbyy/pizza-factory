@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::io;
 use std::net::TcpStream;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::network::tcp::{read_frame, write_frame};
 use crate::protocol::{TcpMessage, from_cbor, to_cbor};
@@ -42,6 +42,38 @@ enum TcpMessageCompat {
     Error {
         message: String,
     },
+}
+
+/// Format the current time as `YYYY-MM-DDTHH:MM:SS.ffffffZ` (UTC, microseconds).
+fn now_rfc3339() -> String {
+    let d = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    let secs = d.as_secs();
+    let micros = d.subsec_micros();
+
+    let (h, m, s) = (secs / 3600 % 24, secs / 60 % 60, secs % 60);
+    let days = secs / 86400;
+
+    // Gregorian calendar from days since 1970-01-01
+    // Algorithm: http://howardhinnant.github.io/date_algorithms.html
+    let z = days + 719468;
+    let era = z / 146097;
+    let doe = z % 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = if month <= 2 { y + 1 } else { y };
+
+    format!("{year:04}-{month:02}-{day:02}T{h:02}:{m:02}:{s:02}.{micros:06}Z")
+}
+
+/// Print a timestamped INFO line to stdout.
+fn log_info(msg: &str) {
+    println!("{}  INFO {}", now_rfc3339(), msg);
 }
 
 fn print_recipe_row(name: &str, missing_actions: &[String], remote_peers: &[String]) {
@@ -141,9 +173,15 @@ pub fn client_get_recipe(peer: &str, recipe_name: &str) -> io::Result<()> {
 }
 
 /// Connect to a peer and send an Order request.
+///
+/// Reads two frames:
+///   Frame 1 — `OrderReceipt` (acknowledged immediately) or `OrderDeclined` / `Error`.
+///   Frame 2 — `CompletedOrder` or `Error` (only when frame 1 was `OrderReceipt`).
 pub fn client_order(peer: &str, recipe_name: &str) -> io::Result<()> {
+    log_info(&format!("Ordering recipe recipe={recipe_name} peer={peer}"));
+
     let mut stream = TcpStream::connect(peer)?;
-    stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+    stream.set_read_timeout(Some(Duration::from_secs(30)))?;
     stream.set_write_timeout(Some(Duration::from_secs(5)))?;
 
     let request = TcpMessage::Order {
@@ -152,18 +190,46 @@ pub fn client_order(peer: &str, recipe_name: &str) -> io::Result<()> {
     let request_bytes = to_cbor(&request).map_err(io::Error::other)?;
     write_frame(&mut stream, &request_bytes)?;
 
-    let response_bytes = read_frame(&mut stream)?;
-    let response: TcpMessage = from_cbor(&response_bytes).map_err(io::Error::other)?;
+    // Frame 1: immediate acknowledgement.
+    let frame1_bytes = read_frame(&mut stream)?;
+    let frame1: TcpMessage = from_cbor(&frame1_bytes).map_err(io::Error::other)?;
 
-    match response {
+    match frame1 {
         TcpMessage::OrderReceipt { order_id } => {
-            println!("Order placed successfully! Order ID: {}", order_id.0);
+            log_info(&format!(
+                "Order receipt {}; waiting for completion...",
+                order_id.0
+            ));
+        }
+        TcpMessage::OrderDeclined { message } => {
+            log_info(&format!("Order of '{recipe_name}' declined: {message}"));
+            return Ok(());
         }
         TcpMessage::Error { message } => {
-            eprintln!("Error: {}", message);
+            log_info(&format!("Error: {message}"));
+            return Ok(());
         }
-        _ => {
-            eprintln!("Unexpected response: {:?}", response);
+        other => {
+            log_info(&format!("Unexpected response: {other:?}"));
+            return Ok(());
+        }
+    }
+
+    // Frame 2: execution result.
+    let frame2_bytes = read_frame(&mut stream)?;
+    let frame2: TcpMessage = from_cbor(&frame2_bytes).map_err(io::Error::other)?;
+
+    match frame2 {
+        TcpMessage::CompletedOrder { recipe_name, result } => {
+            log_info("Order completed successfully");
+            log_info(&format!("Recipe {recipe_name}:"));
+            println!("{result}");
+        }
+        TcpMessage::Error { message } => {
+            log_info(&format!("Execution error: {message}"));
+        }
+        other => {
+            log_info(&format!("Unexpected result: {other:?}"));
         }
     }
 
