@@ -5,7 +5,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::network::tcp::{read_frame, write_frame};
 use crate::protocol::{TcpMessage, from_cbor, to_cbor};
+use crate::store::{self, Order, OrderStatus};
 use serde::Deserialize;
+use uuid::Uuid;
 
 #[derive(Debug, Deserialize, Default)]
 struct RecipeStatusCompat {
@@ -194,19 +196,32 @@ pub fn client_order(peer: &str, recipe_name: &str) -> io::Result<()> {
     let frame1_bytes = read_frame(&mut stream)?;
     let frame1: TcpMessage = from_cbor(&frame1_bytes).map_err(io::Error::other)?;
 
+    let local_id = Uuid::new_v4().as_u128();
+    store::add_order(Order {
+        id: local_id,
+        server_id: None,
+        recipe_name: recipe_name.to_string(),
+        status: OrderStatus::Sending,
+        timestamp: SystemTime::now(),
+    });
+
     match frame1 {
         TcpMessage::OrderReceipt { order_id } => {
             log_info(&format!(
                 "Order receipt {}; waiting for completion...",
                 order_id.0
             ));
+            store::update_order_server_id(local_id, &order_id.0);
+            store::update_order_status(local_id, OrderStatus::Receipt);
         }
         TcpMessage::OrderDeclined { message } => {
             log_info(&format!("Order of '{recipe_name}' declined: {message}"));
+            store::update_order_status(local_id, OrderStatus::Declined(message));
             return Ok(());
         }
         TcpMessage::Error { message } => {
             log_info(&format!("Error: {message}"));
+            store::update_order_status(local_id, OrderStatus::Error(message));
             return Ok(());
         }
         other => {
@@ -227,12 +242,15 @@ pub fn client_order(peer: &str, recipe_name: &str) -> io::Result<()> {
             log_info("Order completed successfully");
             log_info(&format!("Recipe {recipe_name}:"));
             println!("{result}");
+            store::update_order_status(local_id, OrderStatus::Delivered);
         }
         TcpMessage::FailedOrder { recipe_name, error } => {
             log_info(&format!("Order of '{recipe_name}' failed: {error}"));
+            store::update_order_status(local_id, OrderStatus::Failed(error));
         }
         TcpMessage::Error { message } => {
             log_info(&format!("Execution error: {message}"));
+            store::update_order_status(local_id, OrderStatus::Error(message));
         }
         other => {
             log_info(&format!("Unexpected result: {other:?}"));

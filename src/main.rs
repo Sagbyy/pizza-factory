@@ -10,6 +10,7 @@ mod node;
 mod protocol;
 mod recipe;
 mod server;
+mod store;
 mod tui;
 
 use std::sync::Arc;
@@ -24,6 +25,7 @@ use std::thread;
 
 fn main() {
     let cli = Cli::parse();
+    store::init_store();
 
     match cli.command {
         Commands::Start(args) => {
