@@ -144,30 +144,53 @@ pub struct RecipeStatus {
     pub missing_actions: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// Remote recipe availability pointing to one host.
+pub struct RemoteRecipeStatus {
+    pub host: NodeAddr,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-/// Aggregated recipe availability (local and discovered remote peers).
-pub struct RecipeAvailability {
-    /// Local status for this recipe on the current node.
-    pub local: RecipeStatus,
-    /// Remote peers known (via gossip) to advertise this recipe.
-    #[serde(default)]
-    pub remote_peers: Vec<String>,
+#[serde(untagged)]
+/// Canonical recipe availability shape: either local or remote.
+pub enum RecipeAvailability {
+    Local { local: RecipeStatus },
+    Remote { remote: RemoteRecipeStatus },
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 enum RecipeAvailabilityWire {
-    Full {
+    Local {
+        local: RecipeStatus,
+    },
+    Remote {
+        remote: RemoteRecipeStatus,
+    },
+    LegacyFull {
         local: RecipeStatus,
         #[serde(default)]
         remote_peers: Vec<String>,
     },
-    Flat {
+    LegacyFlat {
         #[serde(default)]
         missing_actions: Vec<String>,
         #[serde(default)]
         remote_peers: Vec<String>,
     },
+    LegacyRemoteOnly {
+        #[serde(default)]
+        remote_peers: Vec<String>,
+    },
+}
+
+fn pick_remote_host(mut remote_peers: Vec<String>) -> Option<String> {
+    if remote_peers.is_empty() {
+        None
+    } else {
+        remote_peers.sort();
+        remote_peers.into_iter().next()
+    }
 }
 
 impl<'de> Deserialize<'de> for RecipeAvailability {
@@ -177,20 +200,48 @@ impl<'de> Deserialize<'de> for RecipeAvailability {
     {
         let wire = RecipeAvailabilityWire::deserialize(deserializer)?;
         Ok(match wire {
-            RecipeAvailabilityWire::Full {
+            RecipeAvailabilityWire::Local { local } => Self::Local { local },
+            RecipeAvailabilityWire::Remote { remote } => Self::Remote { remote },
+            RecipeAvailabilityWire::LegacyFull {
                 local,
                 remote_peers,
-            } => Self {
-                local,
-                remote_peers,
-            },
-            RecipeAvailabilityWire::Flat {
+            } => {
+                let _ = remote_peers;
+                Self::Local { local }
+            }
+            RecipeAvailabilityWire::LegacyFlat {
                 missing_actions,
                 remote_peers,
-            } => Self {
-                local: RecipeStatus { missing_actions },
-                remote_peers,
-            },
+            } => {
+                if missing_actions.is_empty() {
+                    if let Some(host) = pick_remote_host(remote_peers) {
+                        Self::Remote {
+                            remote: RemoteRecipeStatus { host: addr(host) },
+                        }
+                    } else {
+                        Self::Local {
+                            local: RecipeStatus { missing_actions },
+                        }
+                    }
+                } else {
+                    Self::Local {
+                        local: RecipeStatus { missing_actions },
+                    }
+                }
+            }
+            RecipeAvailabilityWire::LegacyRemoteOnly { remote_peers } => {
+                if let Some(host) = pick_remote_host(remote_peers) {
+                    Self::Remote {
+                        remote: RemoteRecipeStatus { host: addr(host) },
+                    }
+                } else {
+                    Self::Local {
+                        local: RecipeStatus {
+                            missing_actions: vec![],
+                        },
+                    }
+                }
+            }
         })
     }
 }
@@ -256,6 +307,23 @@ pub fn from_cbor<T: DeserializeOwned>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
+
+    #[derive(Debug, Clone, Serialize)]
+    #[serde(rename_all = "snake_case")]
+    enum LegacyTcpMessage {
+        RecipeListAnswer {
+            recipes: HashMap<String, LegacyRecipeAvailability>,
+        },
+    }
+
+    #[derive(Debug, Clone, Serialize)]
+    struct LegacyRecipeAvailability {
+        #[serde(default)]
+        missing_actions: Vec<String>,
+        #[serde(default)]
+        remote_peers: Vec<String>,
+    }
 
     #[test]
     fn udp_message_roundtrip() {
@@ -327,5 +395,82 @@ mod tests {
         let encoded = to_cbor(&check).unwrap();
         let decoded: Check = from_cbor(&encoded).unwrap();
         assert_eq!(decoded, check);
+    }
+
+    #[test]
+    fn list_recipes_local_serializes_with_local_key() {
+        let mut recipes = HashMap::new();
+        recipes.insert(
+            "Pepperoni".to_string(),
+            RecipeAvailability::Local {
+                local: RecipeStatus {
+                    missing_actions: vec!["Bake".to_string()],
+                },
+            },
+        );
+        let msg = TcpMessage::RecipeListAnswer { recipes };
+        let encoded = to_cbor(&msg).unwrap();
+
+        assert!(
+            encoded.windows("local".len()).any(|w| w == b"local"),
+            "expected serialized payload to contain 'local' key"
+        );
+        assert!(
+            !encoded.windows("remote".len()).any(|w| w == b"remote"),
+            "local-only response should not contain 'remote' key"
+        );
+    }
+
+    #[test]
+    fn list_recipes_remote_serializes_with_remote_host_and_tag_260() {
+        let mut recipes = HashMap::new();
+        recipes.insert(
+            "Margherita".to_string(),
+            RecipeAvailability::Remote {
+                remote: RemoteRecipeStatus {
+                    host: addr("127.0.0.1:8000"),
+                },
+            },
+        );
+        let msg = TcpMessage::RecipeListAnswer { recipes };
+        let encoded = to_cbor(&msg).unwrap();
+
+        assert!(
+            encoded.windows("remote".len()).any(|w| w == b"remote"),
+            "expected serialized payload to contain 'remote' key"
+        );
+        assert!(
+            encoded.windows("host".len()).any(|w| w == b"host"),
+            "expected serialized payload to contain 'host' key"
+        );
+        assert!(
+            encoded.windows(3).any(|w| w == [0xD9, 0x01, 0x04]),
+            "expected CBOR tag 260 marker for host"
+        );
+    }
+
+    #[test]
+    fn list_recipes_legacy_remote_peers_decodes_to_remote_host() {
+        let mut recipes = HashMap::new();
+        recipes.insert(
+            "Funghi".to_string(),
+            LegacyRecipeAvailability {
+                missing_actions: vec![],
+                remote_peers: vec!["127.0.0.1:8002".to_string(), "127.0.0.1:8000".to_string()],
+            },
+        );
+        let legacy = LegacyTcpMessage::RecipeListAnswer { recipes };
+        let encoded = to_cbor(&legacy).unwrap();
+        let decoded: TcpMessage = from_cbor(&encoded).unwrap();
+
+        match decoded {
+            TcpMessage::RecipeListAnswer { recipes } => match recipes.get("Funghi") {
+                Some(RecipeAvailability::Remote { remote }) => {
+                    assert_eq!(remote.host.0, "127.0.0.1:8000");
+                }
+                other => panic!("expected remote availability, got {other:?}"),
+            },
+            other => panic!("expected RecipeListAnswer, got {other:?}"),
+        }
     }
 }
