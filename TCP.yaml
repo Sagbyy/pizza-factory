@@ -1,0 +1,149 @@
+# get list-recipes from local
+peers:
+  - peer: 0
+    host: 127.0.0.1
+    port: 63100
+  - peer: 1
+    host: 127.0.0.1
+    port: 8000
+packets:
+  - packet: 314
+    peer: 0
+    index: 0
+    timestamp: 1776206388.163889800
+    data: !!binary |
+      AAAADQ==
+  - packet: 316
+    peer: 0
+    index: 1
+    timestamp: 1776206388.163965100
+    data: !!binary |
+      bGxpc3RfcmVjaXBlcw==
+  - packet: 318
+    peer: 1
+    index: 0
+    timestamp: 1776206388.164458900
+    data: !!binary |
+      AAABeQ==
+  - packet: 320
+    peer: 1
+    index: 1
+    timestamp: 1776206388.164490300
+    data: !!binary |
+      oXJyZWNpcGVfbGlzdF9hbnN3ZXKhZ3JlY2lwZXOlZkZ1bmdoaaFlbG9jYWyhb21pc3NpbmdfYWN0
+      aW9uc4RsQWRkTXVzaHJvb21zaUFkZENoZWVzZWRCYWtla0FkZE9saXZlT2lsak1hcmdoZXJpdGGh
+      ZWxvY2FsoW9taXNzaW5nX2FjdGlvbnOEaUFkZENoZWVzZWhBZGRCYXNpbGRCYWtla0FkZE9saXZl
+      T2lsaE1hcmluYXJhoWVsb2NhbKFvbWlzc2luZ19hY3Rpb25zhGlBZGRHYXJsaWNqQWRkT3JlZ2Fu
+      b2RCYWtla0FkZE9saXZlT2lsaVBlcHBlcm9uaaFlbG9jYWyhb21pc3NpbmdfYWN0aW9uc4NpQWRk
+      Q2hlZXNlbEFkZFBlcHBlcm9uaWRCYWtlb1F1YXR0cm9Gb3JtYWdnaaFlbG9jYWyhb21pc3Npbmdf
+      YWN0aW9uc4NpQWRkQ2hlZXNlZEJha2VrQWRkT2xpdmVPaWw=
+
+# get list-recipes from distant
+peers:
+  - peer: 0
+    host: 127.0.0.1
+    port: 63102
+  - peer: 1
+    host: 127.0.0.1
+    port: 8001
+packets:
+  - packet: 397
+    peer: 0
+    index: 0
+    timestamp: 1776206390.575767800
+    data: !!binary |
+      AAAADQ==
+  - packet: 399
+    peer: 0
+    index: 1
+    timestamp: 1776206390.575787200
+    data: !!binary |
+      bGxpc3RfcmVjaXBlcw==
+  - packet: 401
+    peer: 1
+    index: 0
+    timestamp: 1776206390.576075800
+    data: !!binary |
+      AAAA8w==
+  - packet: 403
+    peer: 1
+    index: 1
+    timestamp: 1776206390.576128700
+    data: !!binary |
+      oXJyZWNpcGVfbGlzdF9hbnN3ZXKhZ3JlY2lwZXOlZkZ1bmdoaaFmcmVtb3RloWRob3N02QEEbjEy
+      Ny4wLjAuMTo4MDAwak1hcmdoZXJpdGGhZnJlbW90ZaFkaG9zdNkBBG4xMjcuMC4wLjE6ODAwMGhN
+      YXJpbmFyYaFmcmVtb3RloWRob3N02QEEbjEyNy4wLjAuMTo4MDAwaVBlcHBlcm9uaaFmcmVtb3Rl
+      oWRob3N02QEEbjEyNy4wLjAuMTo4MDAwb1F1YXR0cm9Gb3JtYWdnaaFmcmVtb3RloWRob3N02QEE
+      bjEyNy4wLjAuMTo4MDAw
+
+# get-recipe from local
+peers:
+  - peer: 0
+    host: 127.0.0.1
+    port: 62610
+  - peer: 1
+    host: 127.0.0.1
+    port: 8000
+packets:
+  - packet: 190
+    peer: 0
+    index: 0
+    timestamp: 1776207431.645372900
+    data: !!binary |
+      AAAAJA==
+  - packet: 192
+    peer: 0
+    index: 1
+    timestamp: 1776207431.645403400
+    data: !!binary |
+      oWpnZXRfcmVjaXBloWtyZWNpcGVfbmFtZWpNYXJnaGVyaXRh
+  - packet: 194
+    peer: 1
+    index: 0
+    timestamp: 1776207431.645675800
+    data: !!binary |
+      AAAAnA==
+  - packet: 196
+    peer: 1
+    index: 1
+    timestamp: 1776207431.645722300
+    data: !!binary |
+      oW1yZWNpcGVfYW5zd2VyoWZyZWNpcGV4g01hcmdoZXJpdGEgPSBNYWtlRG91Z2ggLT4gQWRkQmFz
+      ZShiYXNlX3R5cGU9dG9tYXRvKSAtPiBbQWRkQ2hlZXNlKGFtb3VudD0yKSwgQWRkQmFzaWwobGVh
+      dmVzPTMpXSAtPiBCYWtlKGR1cmF0aW9uPTUpIC0+IEFkZE9saXZlT2ls
+
+# get-recipe from distant
+peers:
+  - peer: 0
+    host: 127.0.0.1
+    port: 62655
+  - peer: 1
+    host: 127.0.0.1
+    port: 8001
+packets:
+  - packet: 26
+    peer: 0
+    index: 0
+    timestamp: 1776207539.293017700
+    data: !!binary |
+      AAAAJA==
+  - packet: 28
+    peer: 0
+    index: 1
+    timestamp: 1776207539.293039600
+    data: !!binary |
+      oWpnZXRfcmVjaXBloWtyZWNpcGVfbmFtZWpNYXJnaGVyaXRh
+  - packet: 43
+    peer: 1
+    index: 0
+    timestamp: 1776207539.293935900
+    data: !!binary |
+      AAAAnA==
+  - packet: 45
+    peer: 1
+    index: 1
+    timestamp: 1776207539.294015900
+    data: !!binary |
+      oW1yZWNpcGVfYW5zd2VyoWZyZWNpcGV4g01hcmdoZXJpdGEgPSBNYWtlRG91Z2ggLT4gQWRkQmFz
+      ZShiYXNlX3R5cGU9dG9tYXRvKSAtPiBbQWRkQ2hlZXNlKGFtb3VudD0yKSwgQWRkQmFzaWwobGVh
+      dmVzPTMpXSAtPiBCYWtlKGR1cmF0aW9uPTUpIC0+IEFkZE9saXZlT2ls

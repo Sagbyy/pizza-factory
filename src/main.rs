@@ -19,7 +19,7 @@ use clap::Parser;
 use cli::Cli;
 use cli::client::ClientCommands;
 use cli::command::Commands;
-use network::udp::run_gossip_service_shared;
+use network::udp::gossip::run_gossip_service_shared;
 use std::net::UdpSocket;
 use std::thread;
 
@@ -53,7 +53,7 @@ fn main() {
 
             let socket = UdpSocket::bind(&args.host).expect("failed to bind UDP socket");
             socket
-                .set_read_timeout(Some(std::time::Duration::from_millis(500)))
+                .set_read_timeout(Some(std::time::Duration::from_millis(200)))
                 .expect("failed to set UDP socket timeout");
             let peers = args.peers.clone();
             let udp_state = Arc::clone(&state);

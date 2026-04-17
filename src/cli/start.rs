@@ -1,5 +1,19 @@
 use clap::Args;
 
+fn parse_gossip_rate(value: &str) -> Result<f64, String> {
+    let parsed = value
+        .parse::<f64>()
+        .map_err(|e| format!("invalid gossip-rate '{value}': {e}"))?;
+
+    if (0.0..=1.0).contains(&parsed) {
+        Ok(parsed)
+    } else {
+        Err(format!(
+            "invalid gossip-rate '{value}': expected a value between 0.0 and 1.0"
+        ))
+    }
+}
+
 #[derive(Args, Debug)]
 pub struct StartArgs {
     #[arg(long, default_value = "127.0.0.1:8000", value_name = "HOST:PORT")]
@@ -12,32 +26,12 @@ pub struct StartArgs {
     pub recipes_file: Option<String>,
     #[arg(
         long,
-        default_value = "1.",
+        default_value_t = 1.0,
         value_name = "GOSSIP_RATE",
-        help = "Pandemic Gossip rate (0.0-1.0)"
+        value_parser = parse_gossip_rate,
+        help = "Gossip rate (0.0-1.0)"
     )]
     pub gossip_rate: f64,
-    #[arg(
-        long,
-        default_value = "2s",
-        value_name = "GOSSIP_INTERVAL",
-        help = "Gossip interval"
-    )]
-    pub gossip_interval: String,
-    #[arg(
-        long,
-        default_value = "1s",
-        value_name = "REFRESH_DELAY",
-        help = "Delay between refreshes of peer information"
-    )]
-    pub refresh_delay: String,
-    #[arg(
-        long,
-        default_value = "10s",
-        value_name = "REFRESH_TIMEOUT",
-        help = "Delay before deleting peer"
-    )]
-    pub refresh_timeout: String,
     #[arg(long, default_value = "false", help = "Enable debug logging")]
     pub debug: bool,
 }

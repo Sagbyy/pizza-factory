@@ -1,0 +1,73 @@
+peers:
+  - peer: 0
+    host: 127.0.0.1
+    port: 8001
+  - peer: 1
+    host: 127.0.0.1
+    port: 8000
+packets:
+  - packet: 199
+    peer: 0
+    index: 0
+    timestamp: 1776292969.482115800
+    data: !!binary |
+      oWhBbm5vdW5jZaVpbm9kZV9hZGRy2QEEbjEyNy4wLjAuMTo4MDAxbGNhcGFiaWxpdGllc4FkQmFr
+      ZWdyZWNpcGVzgGVwZWVyc4HZAQRuMTI3LjAuMC4xOjgwMDBndmVyc2lvbqJnY291bnRlcgBqZ2Vu
+      ZXJhdGlvbhpp4BRp
+  - packet: 200
+    peer: 1
+    index: 0
+    timestamp: 1776292969.482849000
+    data: !!binary |
+      oWhBbm5vdW5jZaVpbm9kZV9hZGRy2QEEbjEyNy4wLjAuMTo4MDAwbGNhcGFiaWxpdGllc4FpTWFr
+      ZURvdWdoZ3JlY2lwZXOAZXBlZXJzgtkBBG4xMjcuMC4wLjE6ODAwMdkBBG4xMjcuMC4wLjE6ODAw
+      MGd2ZXJzaW9uomdjb3VudGVyAGpnZW5lcmF0aW9uGmngFGk=
+  - packet: 201
+    peer: 0
+    index: 1
+    timestamp: 1776292969.483031300
+    data: !!binary |
+      oWRQaW5nomlsYXN0X3NlZW7ZA+miJRoAB1uTARpp4BRpZ3ZlcnNpb26iZ2NvdW50ZXIAamdlbmVy
+      YXRpb24aaeAUaQ==
+  - packet: 202
+    peer: 1
+    index: 1
+    timestamp: 1776292969.483491300
+    data: !!binary |
+      oWRQb25nomlsYXN0X3NlZW7ZA+miJRoAB1uTARpp4BRpZ3ZlcnNpb26iZ2NvdW50ZXIAamdlbmVy
+      YXRpb24aaeAUaQ==
+  - packet: 205
+    peer: 1
+    index: 2
+    timestamp: 1776292970.506124900
+    data: !!binary |
+      oWRQaW5nomlsYXN0X3NlZW7ZA+miJRoAB7e5ARpp4BRqZ3ZlcnNpb26iZ2NvdW50ZXIAamdlbmVy
+      YXRpb24aaeAUaQ==
+  - packet: 206
+    peer: 0
+    index: 2
+    timestamp: 1776292970.506650600
+    data: !!binary |
+      oWRQb25nomlsYXN0X3NlZW7ZA+miJRoAB7e5ARpp4BRqZ3ZlcnNpb26iZ2NvdW50ZXIAamdlbmVy
+      YXRpb24aaeAUaQ==
+  - packet: 239
+    peer: 0
+    index: 3
+    timestamp: 1776292971.531294000
+    data: !!binary |
+      oWRQaW5nomlsYXN0X3NlZW7ZA+miARpp4BRrJRoACBpWZ3ZlcnNpb26iZ2NvdW50ZXIAamdlbmVy
+      YXRpb24aaeAUaQ==
+  - packet: 240
+    peer: 1
+    index: 3
+    timestamp: 1776292971.531724500
+    data: !!binary |
+      oWRQb25nomlsYXN0X3NlZW7ZA+miJRoACBpWARpp4BRrZ3ZlcnNpb26iZ2NvdW50ZXIAamdlbmVy
+      YXRpb24aaeAUaQ==
+  - packet: 245
+    peer: 1
+    index: 4
+    timestamp: 1776292972.582305700
+    data: !!binary |
+      oWRQaW5nomlsYXN0X3NlZW7ZA+miARpp4BRsJRoACOFpZ3ZlcnNpb26iZ2NvdW50ZXIAamdlbmVy
+      YXRpb24aaeAUaQ==
