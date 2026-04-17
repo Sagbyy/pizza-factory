@@ -26,8 +26,11 @@ pub fn render_ui(frame: &mut Frame, app: &App, _args: &StartTuiArgs) {
     let [left, right] =
         Layout::horizontal([Constraint::Percentage(25), Constraint::Percentage(75)]).areas(top);
 
-    let [target, log] =
-        Layout::horizontal([Constraint::Length(30), Constraint::Fill(1)]).areas(logger);
+    let [target, log] = if app.show_targets {
+        Layout::horizontal([Constraint::Length(30), Constraint::Fill(1)]).areas(logger)
+    } else {
+        Layout::horizontal([Constraint::Length(0), Constraint::Fill(1)]).areas(logger)
+    };
 
     render_recent_orders_block(frame, left);
     render_local_agent_status_block(frame, right, app);

@@ -16,6 +16,7 @@ pub struct App {
     pub input: String,
     pub logger_state: TuiWidgetState,
     pub state: Arc<NodeState>,
+    pub show_targets: bool,
 }
 
 impl App {
@@ -25,6 +26,7 @@ impl App {
             input: String::new(),
             logger_state: TuiWidgetState::new(),
             state,
+            show_targets: true,
         }
     }
 
@@ -50,7 +52,7 @@ impl App {
                         KeyCode::Char(' ') => {
                             self.logger_state.transition(TuiWidgetEvent::SpaceKey)
                         }
-                        KeyCode::Char('h') => self.logger_state.transition(TuiWidgetEvent::HideKey),
+                        KeyCode::Char('h') => self.show_targets = !self.show_targets,
                         KeyCode::Char('f') => {
                             self.logger_state.transition(TuiWidgetEvent::FocusKey)
                         }
