@@ -229,6 +229,9 @@ fn render_tui_log(frame: &mut Frame, app: &App, area: Rect) {
         .style_info(Style::new().white())
         .style_debug(Style::new().blue())
         .style_trace(Style::new().gray())
+        .output_file(false)
+        .output_line(false)
+        .output_separator(' ')
         .block(Block::bordered().title("Tui Log"))
         .state(&app.logger_state);
     frame.render_widget(widget, area);
