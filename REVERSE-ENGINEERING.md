@@ -956,7 +956,8 @@ client → 8002 : order("Pepperoni")
 
 ![img.png](screenshots/img22.png)
 
-Quand un client essaie de commander une pizza qui n'est pas dans la liste des recettes:
+#### Traitement d'erreur
+1. Quand un client essaie de commander une pizza qui n'est pas dans la liste des recettes:
 ![img.png](screenshots/img_19.png)
 
 Requête client décodée:
@@ -974,6 +975,120 @@ Réponse du serveur décodée:
 {
   "order_declined": {
     "message": "Unknown recipe"
+  }
+}
+  ```
+
+2. Quand un client essaie de commander une pizza dont une étape n'est couverte par aucun agent:
+
+![img.png](screenshots/img23.png)
+- L'agent qui exécute la dernière étape connue par le réseau des agents, met à jour deliver message 
+avec l'erreur. Il envoie ce deliver message à l'agent delivery host. 
+```json
+{
+  "deliver": {
+    "payload": {
+      "order_id": {
+        "value": "9f2daf8a-646e-4a6f-9b73-6d67b7c14c0f",
+        "tag": 37
+      },
+      "order_timestamp": "1776383701577069",
+      "delivery_host": {
+        "value": "127.0.0.1:8000",
+        "tag": 260
+      },
+      "action_index": 3,
+      "action_sequence": [
+        {
+          "name": "MakeDough",
+          "params": {}
+        },
+        {
+          "name": "AddBase",
+          "params": {
+            "base_type": "tomato"
+          }
+        },
+        {
+          "name": "AddCheese",
+          "params": {
+            "amount": "2"
+          }
+        },
+        {
+          "name": "AddBasil",
+          "params": {
+            "leaves": "3"
+          }
+        },
+        {
+          "name": "Bake",
+          "params": {
+            "duration": "5"
+          }
+        },
+        {
+          "name": "AddOliveOil",
+          "params": {}
+        }
+      ],
+      "content": "Dough + Base(tomato): ready\nCheese x2\n",
+      "updates": [
+        {
+          "Action": {
+            "action": {
+              "name": "MakeDough",
+              "params": {}
+            },
+            "timestamp": "1776383701578121"
+          }
+        },
+        {
+          "Forward": {
+            "to": {
+              "value": "127.0.0.1:8002",
+              "tag": 260
+            },
+            "timestamp": "1776383701578905"
+          }
+        },
+        {
+          "Action": {
+            "action": {
+              "name": "AddBase",
+              "params": {
+                "base_type": "tomato"
+              }
+            },
+            "timestamp": "1776383701579734"
+          }
+        },
+        {
+          "Action": {
+            "action": {
+              "name": "AddCheese",
+              "params": {
+                "amount": "2"
+              }
+            },
+            "timestamp": "1776383701580508"
+          }
+        }
+      ]
+    },
+    "error": "Action AddBasil not available"
+  }
+}
+```
+- Le client reçoit order receipt et un message d'échec:
+
+![img.png](screenshots/img24.png)
+
+```json
+{
+  "failed_order": {
+    "recipe_name": "Margherita",
+    "error": "Action AddBasil not available"
   }
 }
   ```

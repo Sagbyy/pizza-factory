@@ -222,6 +222,10 @@ pub enum TcpMessage {
         recipe_name: String,
         result: String,
     },
+    FailedOrder {
+        recipe_name: String,
+        error: String,
+    },
     OrderDeclined {
         message: String,
     },
@@ -289,6 +293,18 @@ mod tests {
                     timestamp: 1_773_599_028_758_515,
                 }],
             },
+        };
+
+        let encoded = to_cbor(&msg).unwrap();
+        let decoded: TcpMessage = from_cbor(&encoded).unwrap();
+        assert_eq!(decoded, msg);
+    }
+
+    #[test]
+    fn tcp_failed_order_roundtrip() {
+        let msg = TcpMessage::FailedOrder {
+            recipe_name: "Margherita".to_string(),
+            error: "Action AddBasil not available".to_string(),
         };
 
         let encoded = to_cbor(&msg).unwrap();
