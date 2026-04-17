@@ -125,6 +125,14 @@ impl NodeState {
             },
         };
 
+        log::info!(target: "node",
+            "Node initialized addr={} capabilities={:?} recipes={}",
+            identity.addr,
+            identity.capabilities,
+            identity.recipes.len()
+        );
+        log::debug!(target: "node", "Bootstrap peers={}", gossip.peers.len());
+
         Ok(Arc::new(NodeState {
             identity,
             gossip: RwLock::new(gossip),

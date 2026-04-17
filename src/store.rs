@@ -29,6 +29,19 @@ pub enum OrderStatus {
     Error(String),
 }
 
+impl std::fmt::Display for OrderStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            OrderStatus::Sending => write!(f, "Sending"),
+            OrderStatus::Receipt => write!(f, "Receipt"),
+            OrderStatus::Declined(msg) => write!(f, "Declined({msg})"),
+            OrderStatus::Delivered => write!(f, "Delivered"),
+            OrderStatus::Failed(msg) => write!(f, "Failed({msg})"),
+            OrderStatus::Error(msg) => write!(f, "Error({msg})"),
+        }
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Order {
     pub id: u128,
@@ -53,10 +66,12 @@ pub static ORDERS: OnceLock<RwLock<HashMap<u128, Order>>> = OnceLock::new();
 pub fn init_store() -> StoreGuard {
     let _ = std::fs::create_dir_all("db");
 
-    let map = std::fs::read_to_string(PATH)
+    let map: HashMap<u128, Order> = std::fs::read_to_string(PATH)
         .ok()
         .and_then(|json| serde_json::from_str(&json).ok())
         .unwrap_or_default();
+
+    log::info!(target: "store", "Store initialized orders_loaded={}", map.len());
 
     ORDERS.set(RwLock::new(map)).ok();
     StoreGuard {
@@ -72,12 +87,20 @@ pub fn now_ms() -> u64 {
 }
 
 fn save_to_file(orders: &HashMap<u128, Order>) {
-    if let Ok(json) = serde_json::to_string(orders) {
-        let _ = write(PATH, json);
+    match serde_json::to_string(orders) {
+        Ok(json) => {
+            if let Err(e) = write(PATH, &json) {
+                log::error!(target: "store", "Failed to save orders to file: {e}");
+            } else {
+                log::debug!(target: "store", "Orders saved count={}", orders.len());
+            }
+        }
+        Err(e) => log::error!(target: "store", "Failed to serialize orders: {e}"),
     }
 }
 
 pub fn add_order(order: Order) {
+    log::info!(target: "store", "Order added id={} recipe={}", order.id, order.recipe_name);
     let mut orders = ORDERS.get().unwrap().write().unwrap();
     orders.insert(order.id, order);
     save_to_file(&orders);
@@ -86,16 +109,22 @@ pub fn add_order(order: Order) {
 pub fn update_order_server_id(id: u128, server_id: &str) {
     let mut orders = ORDERS.get().unwrap().write().unwrap();
     if let Some(order) = orders.get_mut(&id) {
+        log::debug!(target: "store", "Order server_id updated id={} server_id={}", id, server_id);
         order.server_id = Some(server_id.to_string());
         save_to_file(&orders);
+    } else {
+        log::warn!(target: "store", "update_order_server_id: order not found id={}", id);
     }
 }
 
 pub fn update_order_status(id: u128, status: OrderStatus) {
     let mut orders = ORDERS.get().unwrap().write().unwrap();
     if let Some(order) = orders.get_mut(&id) {
+        log::debug!(target: "store", "Order status updated id={} status={}", id, status);
         order.status = status;
         save_to_file(&orders);
+    } else {
+        log::warn!(target: "store", "update_order_status: order not found id={}", id);
     }
 }
 

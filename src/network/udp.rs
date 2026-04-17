@@ -67,11 +67,13 @@ pub fn run_gossip_service_shared(
     node_state: Arc<NodeState>,
     peers: &[String],
 ) -> Result<()> {
+    log::info!(target: "gossip", "Gossip service started addr={}", node_state.identity.addr);
     let announce = build_announce_from_node(&node_state, peers.to_vec());
     for peer in peers {
         if peer == &node_state.identity.addr {
             continue;
         }
+        log::debug!(target: "gossip", "Sending initial Announce to {}", peer);
         send_udp_message(socket, &announce, peer)?;
     }
 
@@ -154,7 +156,7 @@ pub fn process_one_datagram_shared(
                 Ok(msg) => msg,
                 Err(e) => {
                     // Be tolerant to unknown/malformed frames from heterogeneous peers.
-                    eprintln!("UDP decode error from {from}: {e}");
+                    log::warn!(target: "gossip", "UDP decode error from {from}: {e}");
                     return Ok(UdpMessage::Pong(Check {
                         last_seen: crate::protocol::last_seen(HashMap::new()),
                         version: Version {
@@ -214,8 +216,10 @@ pub fn handle_udp_message_shared(
                 let mut gossip = node_state.gossip.write().unwrap();
                 if let Some(peer) = gossip.peers.get_mut(peer_addr) {
                     if let Some(sent) = peer.ping_sent_us {
-                        peer.rtt_us = Some(now_micros().saturating_sub(sent));
+                        let rtt = now_micros().saturating_sub(sent);
+                        peer.rtt_us = Some(rtt);
                         peer.ping_sent_us = None;
+                        log::debug!(target: "gossip", "Pong from {} rtt={:.1}ms", peer_addr, rtt as f64 / 1000.0);
                     }
                 }
             }
@@ -278,10 +282,17 @@ fn build_pong_from_node(node_state: &Arc<NodeState>) -> UdpMessage {
 
 fn apply_announce_shared(node_state: &Arc<NodeState>, announce: &Announce) {
     let mut gossip = node_state.gossip.write().unwrap();
+    let is_new = !gossip.peers.contains_key(&announce.node_addr.0);
     let peer = gossip
         .peers
         .entry(announce.node_addr.0.clone())
         .or_insert_with(PeerInfo::unknown);
+
+    if is_new {
+        log::info!(target: "gossip", "New peer discovered addr={} capabilities={:?}", announce.node_addr.0, announce.capabilities);
+    } else {
+        log::trace!(target: "gossip", "Announce from {} capabilities={:?}", announce.node_addr.0, announce.capabilities);
+    }
 
     peer.capabilities = announce.capabilities.clone();
     peer.recipes = announce.recipes.clone();

@@ -204,7 +204,7 @@ pub fn handle_order(state: &NodeState, recipe_name: &str, stream: &mut TcpStream
     };
     let action_sequence = flatten_recipe(&recipe);
 
-    log::info!(
+    log::info!(target: "orders",
         "Received Order recipe={} order_id={}",
         recipe_name,
         order_id_str
@@ -290,7 +290,7 @@ pub fn handle_process_payload(
     mut payload: ProcessPayload,
 ) -> TcpMessage {
     let order_id = payload.order_id.0.clone();
-    log::info!(
+    log::info!(target: "orders",
         "Received ProcessPayload order_id={} action_index={}",
         order_id,
         payload.action_index
@@ -344,7 +344,7 @@ pub fn handle_process_payload(
                     .collect()
             };
 
-            log::info!(
+            log::info!(target: "actions",
                 "Forwarding executing action {} to {}",
                 action.name,
                 candidate_peers
@@ -365,7 +365,7 @@ pub fn handle_process_payload(
                 candidate_peers.join(", ")
             };
 
-            log::error!(
+            log::error!(target: "actions",
                 "cannot execute action '{}' locally and forwarding failed; candidate peers: {}",
                 action.name,
                 candidate_peers_msg
@@ -391,7 +391,7 @@ pub fn handle_process_payload(
             };
         }
 
-        log::info!(
+        log::info!(target: "actions",
             "Executing action {} locally order_id={}",
             action.name,
             order_id
@@ -419,7 +419,7 @@ pub fn handle_deliver(
     _error: Option<String>,
 ) -> TcpMessage {
     let order_id = payload.order_id.0.clone();
-    log::info!("Received ProcessPayload for deliver order_id={}", order_id);
+    log::info!(target: "orders", "Received ProcessPayload for deliver order_id={}", order_id);
 
     let completed = if let Some(error) = _error {
         TcpMessage::FailedOrder {
@@ -446,9 +446,9 @@ pub fn handle_deliver(
         .remove(&order_id)
     {
         let _ = tx.send(completed);
-        log::info!("Delivered from {}", state.identity.addr);
+        log::info!(target: "orders", "Delivered from {}", state.identity.addr);
     } else {
-        log::info!(
+        log::info!(target: "orders",
             "Received deliver for unknown order_id={} (no waiting handler)",
             order_id
         );

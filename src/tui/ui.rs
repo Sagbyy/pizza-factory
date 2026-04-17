@@ -27,7 +27,7 @@ pub fn render_ui(frame: &mut Frame, app: &App, _args: &StartTuiArgs) {
         Layout::horizontal([Constraint::Percentage(25), Constraint::Percentage(75)]).areas(top);
 
     let [target, log] =
-        Layout::horizontal([Constraint::Length(17), Constraint::Fill(1)]).areas(logger);
+        Layout::horizontal([Constraint::Length(30), Constraint::Fill(1)]).areas(logger);
 
     render_recent_orders_block(frame, left);
     render_local_agent_status_block(frame, right, app);
@@ -137,12 +137,14 @@ fn render_local_agent_status_block(frame: &mut Frame, area: Rect, app: &App) {
             Span::styled("Recipes: ", Style::new().bold()),
             Span::raw(recipes_str),
         ]),
-        Line::from(Span::styled("Peers:", Style::new().bold())),
         Line::from(Span::styled("Known peers:", Style::new().bold())),
     ];
 
     let mut sorted_peers: Vec<_> = gossip.peers.iter().collect();
     sorted_peers.sort_by_key(|(addr, _)| addr.as_str());
+
+    let my_addr = &state.identity.addr;
+    sorted_peers.retain(|(addr, _)| *addr != my_addr);
 
     if sorted_peers.is_empty() {
         lines.push(Line::from(Span::raw("  (none)")));
@@ -163,6 +165,11 @@ fn render_local_agent_status_block(frame: &mut Frame, area: Rect, app: &App) {
             ))));
         }
     }
+
+    lines.push(Line::from(vec![
+        Span::styled("Host: ", Style::new().bold()),
+        Span::raw(state.identity.addr.as_str()),
+    ]));
 
     lines.push(Line::from(vec![
         Span::styled("Current version: ", Style::new().bold()),
