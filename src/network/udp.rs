@@ -214,13 +214,13 @@ pub fn handle_udp_message_shared(
         UdpMessage::Pong(check) => {
             {
                 let mut gossip = node_state.gossip.write().unwrap();
-                if let Some(peer) = gossip.peers.get_mut(peer_addr) {
-                    if let Some(sent) = peer.ping_sent_us {
-                        let rtt = now_micros().saturating_sub(sent);
-                        peer.rtt_us = Some(rtt);
-                        peer.ping_sent_us = None;
-                        log::debug!(target: "gossip", "Pong from {} rtt={:.1}ms", peer_addr, rtt as f64 / 1000.0);
-                    }
+                if let Some(peer) = gossip.peers.get_mut(peer_addr)
+                    && let Some(sent) = peer.ping_sent_us
+                {
+                    let rtt = now_micros().saturating_sub(sent);
+                    peer.rtt_us = Some(rtt);
+                    peer.ping_sent_us = None;
+                    log::debug!(target: "gossip", "Pong from {} rtt={:.1}ms", peer_addr, rtt as f64 / 1000.0);
                 }
             }
             apply_check_shared(node_state, peer_addr, check);
@@ -231,7 +231,7 @@ pub fn handle_udp_message_shared(
 
 fn build_announce_from_node(node_state: &Arc<NodeState>, peers: Vec<String>) -> UdpMessage {
     let version = {
-        let gossip = node_state.gossip.write().unwrap();
+        let gossip = node_state.gossip.read().unwrap();
         gossip.version.clone()
     };
 

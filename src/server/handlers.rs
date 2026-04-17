@@ -54,7 +54,10 @@ pub fn handle_list_recipes(state: &NodeState) -> TcpMessage {
     // Add recipes discovered via gossip from remote peers using a deterministic host.
     let mut remote_hosts: HashMap<String, String> = HashMap::new();
     {
-        let gossip = state.gossip.read().unwrap_or_else(|e| e.into_inner());
+        let gossip = match state.gossip.read() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
         for (peer_addr, peer_info) in &gossip.peers {
             for recipe_name in &peer_info.recipes {
                 remote_hosts
@@ -98,7 +101,10 @@ pub fn handle_get_recipe(state: &NodeState, recipe_name: &str) -> TcpMessage {
 
     // If not local, find candidate peers via gossip
     let candidate_peers: Vec<String> = {
-        let gossip = state.gossip.read().unwrap_or_else(|e| e.into_inner());
+        let gossip = match state.gossip.read() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
         gossip
             .peers
             .iter()
@@ -127,7 +133,10 @@ pub fn handle_order(state: &NodeState, recipe_name: &str, stream: &mut TcpStream
     // Check availability: local recipe file or a peer that advertised it.
     let is_local = state.identity.recipes.iter().any(|r| r.name == recipe_name);
     let peer_knows = {
-        let gossip = state.gossip.read().unwrap_or_else(|e| e.into_inner());
+        let gossip = match state.gossip.read() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
         gossip
             .peers
             .values()
@@ -159,11 +168,13 @@ pub fn handle_order(state: &NodeState, recipe_name: &str, stream: &mut TcpStream
 
     // Register a channel so handle_deliver can signal us when done.
     let (tx, rx) = mpsc::sync_channel(1);
-    state
-        .pending_orders
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .insert(order_id_str.clone(), tx);
+    {
+        let mut pending_orders = match state.pending_orders.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        pending_orders.insert(order_id_str.clone(), tx);
+    }
 
     // Fetch DSL — local first, then from the peer that advertised it.
     let dsl = if is_local {
@@ -243,11 +254,11 @@ pub fn handle_order(state: &NodeState, recipe_name: &str, stream: &mut TcpStream
         matches!(&drive_result, TcpMessage::CompletedOrder { result, .. } if result.is_empty());
 
     if !deliver_sent {
-        state
-            .pending_orders
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(&order_id_str);
+        let mut pending_orders = match state.pending_orders.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        pending_orders.remove(&order_id_str);
         return drive_result;
     }
 
@@ -258,11 +269,13 @@ pub fn handle_order(state: &NodeState, recipe_name: &str, stream: &mut TcpStream
             message: "order timed out waiting for deliver".to_string(),
         });
 
-    state
-        .pending_orders
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .remove(&order_id_str);
+    {
+        let mut pending_orders = match state.pending_orders.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        pending_orders.remove(&order_id_str);
+    }
 
     // Stamp the correct recipe_name (handle_deliver leaves it empty).
     match result {
@@ -340,7 +353,10 @@ pub fn handle_process_payload(
 
         if !can_execute {
             let candidate_peers: Vec<String> = {
-                let gossip = state.gossip.read().unwrap_or_else(|e| e.into_inner());
+                let gossip = match state.gossip.read() {
+                    Ok(guard) => guard,
+                    Err(poisoned) => poisoned.into_inner(),
+                };
                 gossip
                     .peers
                     .iter()
@@ -444,12 +460,11 @@ pub fn handle_deliver(
         }
     };
 
-    if let Some(tx) = state
-        .pending_orders
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .remove(&order_id)
-    {
+    let mut pending_orders = match state.pending_orders.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    if let Some(tx) = pending_orders.remove(&order_id) {
         let _ = tx.send(completed);
         log::info!(target: "orders", "Delivered from {}", state.identity.addr);
     } else {
@@ -520,7 +535,10 @@ fn build_result(payload: ProcessPayload) -> String {
         content: payload.content,
         updates: payload.updates,
     };
-    serde_json::to_string_pretty(&order_result).unwrap_or_else(|_| order_result.content)
+    match serde_json::to_string_pretty(&order_result) {
+        Ok(json) => json,
+        Err(_) => order_result.content,
+    }
 }
 
 fn now_micros() -> u64 {
@@ -669,7 +687,10 @@ mod tests {
     fn handle_list_recipes_returns_remote_host_when_recipe_is_remote_only() {
         let state = build_state(vec![], vec![]);
         {
-            let mut gossip = state.gossip.write().unwrap_or_else(|e| e.into_inner());
+            let mut gossip = match state.gossip.write() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
             gossip.peers.insert(
                 "127.0.0.1:8000".to_string(),
                 PeerInfo {
@@ -702,7 +723,10 @@ mod tests {
     fn handle_list_recipes_remote_host_is_deterministic_across_multiple_peers() {
         let state = build_state(vec![], vec![]);
         {
-            let mut gossip = state.gossip.write().unwrap_or_else(|e| e.into_inner());
+            let mut gossip = match state.gossip.write() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
             gossip.peers.insert(
                 "127.0.0.1:8002".to_string(),
                 PeerInfo {
@@ -980,11 +1004,13 @@ mod tests {
         let order_id = uuid::Uuid::new_v4();
         let order_id_str = order_id.to_string();
         let (tx, rx) = mpsc::sync_channel(1);
-        state
-            .pending_orders
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(order_id_str.clone(), tx);
+        {
+            let mut pending_orders = match state.pending_orders.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            pending_orders.insert(order_id_str.clone(), tx);
+        }
 
         let payload = ProcessPayload {
             order_id: crate::protocol::uuid(order_id),
@@ -1019,7 +1045,10 @@ mod tests {
         let remote_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let remote_addr = remote_listener.local_addr().unwrap().to_string();
         {
-            let mut gossip = state.gossip.write().unwrap_or_else(|e| e.into_inner());
+            let mut gossip = match state.gossip.write() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
             gossip.peers.insert(
                 remote_addr.clone(),
                 PeerInfo {
