@@ -220,10 +220,16 @@ pub fn client_order(peer: &str, recipe_name: &str) -> io::Result<()> {
     let frame2: TcpMessage = from_cbor(&frame2_bytes).map_err(io::Error::other)?;
 
     match frame2 {
-        TcpMessage::CompletedOrder { recipe_name, result } => {
+        TcpMessage::CompletedOrder {
+            recipe_name,
+            result,
+        } => {
             log_info("Order completed successfully");
             log_info(&format!("Recipe {recipe_name}:"));
             println!("{result}");
+        }
+        TcpMessage::FailedOrder { recipe_name, error } => {
+            log_info(&format!("Order of '{recipe_name}' failed: {error}"));
         }
         TcpMessage::Error { message } => {
             log_info(&format!("Execution error: {message}"));

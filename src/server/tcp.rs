@@ -97,9 +97,7 @@ fn dispatch(msg: TcpMessage, state: &NodeState) -> TcpMessage {
         TcpMessage::ProcessPayload { payload } => {
             handlers::handle_process_payload(state, "unknown", payload)
         }
-        TcpMessage::Deliver { payload, error } => {
-            handlers::handle_deliver(state, payload, error)
-        }
+        TcpMessage::Deliver { payload, error } => handlers::handle_deliver(state, payload, error),
         _ => TcpMessage::Error {
             message: "unexpected message type".into(),
         },

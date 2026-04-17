@@ -44,12 +44,22 @@ impl App {
                         KeyCode::Left => self.logger_state.transition(TuiWidgetEvent::LeftKey),
                         KeyCode::Right => self.logger_state.transition(TuiWidgetEvent::RightKey),
                         KeyCode::Char('+') => self.logger_state.transition(TuiWidgetEvent::PlusKey),
-                        KeyCode::Char('-') => self.logger_state.transition(TuiWidgetEvent::MinusKey),
-                        KeyCode::Char(' ') => self.logger_state.transition(TuiWidgetEvent::SpaceKey),
+                        KeyCode::Char('-') => {
+                            self.logger_state.transition(TuiWidgetEvent::MinusKey)
+                        }
+                        KeyCode::Char(' ') => {
+                            self.logger_state.transition(TuiWidgetEvent::SpaceKey)
+                        }
                         KeyCode::Char('h') => self.logger_state.transition(TuiWidgetEvent::HideKey),
-                        KeyCode::Char('f') => self.logger_state.transition(TuiWidgetEvent::FocusKey),
-                        KeyCode::PageUp => self.logger_state.transition(TuiWidgetEvent::PrevPageKey),
-                        KeyCode::PageDown => self.logger_state.transition(TuiWidgetEvent::NextPageKey),
+                        KeyCode::Char('f') => {
+                            self.logger_state.transition(TuiWidgetEvent::FocusKey)
+                        }
+                        KeyCode::PageUp => {
+                            self.logger_state.transition(TuiWidgetEvent::PrevPageKey)
+                        }
+                        KeyCode::PageDown => {
+                            self.logger_state.transition(TuiWidgetEvent::NextPageKey)
+                        }
                         KeyCode::Esc => self.logger_state.transition(TuiWidgetEvent::EscapeKey),
                         _ => {}
                     },

@@ -175,12 +175,12 @@ pub fn handle_order(state: &NodeState, recipe_name: &str, stream: &mut TcpStream
             TcpMessage::Error { message } => {
                 return TcpMessage::Error {
                     message: format!("fetch recipe: {message}"),
-                }
+                };
             }
             other => {
                 return TcpMessage::Error {
                     message: format!("unexpected get_recipe response: {other:?}"),
-                }
+                };
             }
         }
     };
@@ -191,7 +191,7 @@ pub fn handle_order(state: &NodeState, recipe_name: &str, stream: &mut TcpStream
         Err(e) => {
             return TcpMessage::Error {
                 message: format!("parse recipe: {e}"),
-            }
+            };
         }
     };
     let recipe = match recipes.into_iter().find(|r| r.name == recipe_name) {
@@ -199,7 +199,7 @@ pub fn handle_order(state: &NodeState, recipe_name: &str, stream: &mut TcpStream
         None => {
             return TcpMessage::Error {
                 message: format!("recipe '{recipe_name}' not found after fetch"),
-            }
+            };
         }
     };
     let action_sequence = flatten_recipe(&recipe);
@@ -221,9 +221,30 @@ pub fn handle_order(state: &NodeState, recipe_name: &str, stream: &mut TcpStream
         updates: vec![],
     };
 
-    // Drive execution — this eventually sends a `deliver` to delivery_host (ourselves).
-    // We don't use the return value: handle_deliver will signal `rx` instead.
-    let _drive_result = handle_process_payload(state, recipe_name, payload);
+    // Drive execution — on success this sends a `deliver` to delivery_host and returns
+    // a placeholder CompletedOrder with an empty result string.
+    // On failure (missing capability, forward error) it either returns Error /
+    // OrderDeclined immediately, or sends a deliver error and returns a placeholder
+    // CompletedOrder to keep waiting for channel delivery.
+    let drive_result = handle_process_payload(state, recipe_name, payload);
+
+    // A placeholder CompletedOrder with an empty result means the deliver was sent
+    // successfully and handle_deliver will signal `rx`.
+    // Any other return value means execution failed before reaching the deliver step —
+    // clean up and propagate the error immediately without waiting on the channel.
+    // This prevents accepting a partial `deliver` that the reference binary may have
+    // sent with incomplete content when a step failed mid-chain.
+    let deliver_sent =
+        matches!(&drive_result, TcpMessage::CompletedOrder { result, .. } if result.is_empty());
+
+    if !deliver_sent {
+        state
+            .pending_orders
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&order_id_str);
+        return drive_result;
+    }
 
     // Block until deliver arrives (or timeout).
     let result = rx
@@ -244,6 +265,10 @@ pub fn handle_order(state: &NodeState, recipe_name: &str, stream: &mut TcpStream
             recipe_name: recipe_name.to_string(),
             result,
         },
+        TcpMessage::FailedOrder { error, .. } => TcpMessage::FailedOrder {
+            recipe_name: recipe_name.to_string(),
+            error,
+        },
         other => other,
     }
 }
@@ -259,7 +284,11 @@ pub fn handle_order(state: &NodeState, recipe_name: &str, stream: &mut TcpStream
 ///
 /// `recipe_name` is used to label the `CompletedOrder`. Pass `"unknown"` when
 /// the name is not available (e.g. inter-agent `ProcessPayload` hops).
-pub fn handle_process_payload(state: &NodeState, recipe_name: &str, mut payload: ProcessPayload) -> TcpMessage {
+pub fn handle_process_payload(
+    state: &NodeState,
+    recipe_name: &str,
+    mut payload: ProcessPayload,
+) -> TcpMessage {
     let order_id = payload.order_id.0.clone();
     log::info!(
         "Received ProcessPayload order_id={} action_index={}",
@@ -318,23 +347,47 @@ pub fn handle_process_payload(state: &NodeState, recipe_name: &str, mut payload:
             log::info!(
                 "Forwarding executing action {} to {}",
                 action.name,
-                candidate_peers.first().map(String::as_str).unwrap_or("none")
+                candidate_peers
+                    .first()
+                    .map(String::as_str)
+                    .unwrap_or("none")
             );
 
             if let Some(response) = try_forward_payload(&payload, &candidate_peers) {
                 return response;
             }
 
-            return TcpMessage::Error {
-                message: format!(
-                    "cannot execute action '{}' locally and forwarding failed; candidate peers: {}",
-                    action.name,
-                    if candidate_peers.is_empty() {
-                        "none".to_string()
-                    } else {
-                        candidate_peers.join(", ")
-                    }
-                ),
+            let delivery_host = payload.delivery_host.0.clone();
+            let unavailable_error = format!("Action {} not available", action.name);
+            let candidate_peers_msg = if candidate_peers.is_empty() {
+                "none".to_string()
+            } else {
+                candidate_peers.join(", ")
+            };
+
+            log::error!(
+                "cannot execute action '{}' locally and forwarding failed; candidate peers: {}",
+                action.name,
+                candidate_peers_msg
+            );
+
+            let deliver_msg = TcpMessage::Deliver {
+                payload,
+                error: Some(unavailable_error.clone()),
+            };
+
+            return match send_deliver(&delivery_host, &deliver_msg) {
+                Ok(()) => TcpMessage::CompletedOrder {
+                    // Placeholder — real result will arrive through handle_deliver.
+                    recipe_name: recipe_name.to_string(),
+                    result: String::new(),
+                },
+                Err(e) => TcpMessage::Error {
+                    message: format!(
+                        "deliver failure '{}' to {delivery_host} failed: {e}",
+                        unavailable_error
+                    ),
+                },
             };
         }
 
@@ -360,19 +413,30 @@ pub fn handle_process_payload(state: &NodeState, recipe_name: &str, mut payload:
 /// 2. Builds the `CompletedOrder` result.
 /// 3. Signals the `handle_order` thread that is blocking on the channel for
 ///    this `order_id` — which then writes `CompletedOrder` to the client stream.
-pub fn handle_deliver(state: &NodeState, mut payload: ProcessPayload, _error: Option<String>) -> TcpMessage {
+pub fn handle_deliver(
+    state: &NodeState,
+    mut payload: ProcessPayload,
+    _error: Option<String>,
+) -> TcpMessage {
     let order_id = payload.order_id.0.clone();
     log::info!("Received ProcessPayload for deliver order_id={}", order_id);
 
-    payload.updates.push(Update::Deliver {
-        timestamp: now_micros(),
-    });
-
-    // We don't know the recipe_name here, but handle_order will label it when
-    // it receives the CompletedOrder via the channel.
-    let completed = TcpMessage::CompletedOrder {
-        recipe_name: String::new(),
-        result: build_result(payload),
+    let completed = if let Some(error) = _error {
+        TcpMessage::FailedOrder {
+            // We don't know the recipe_name here; handle_order will stamp it.
+            recipe_name: String::new(),
+            error,
+        }
+    } else {
+        payload.updates.push(Update::Deliver {
+            timestamp: now_micros(),
+        });
+        // We don't know the recipe_name here, but handle_order will label it when
+        // it receives the CompletedOrder via the channel.
+        TcpMessage::CompletedOrder {
+            recipe_name: String::new(),
+            result: build_result(payload),
+        }
     };
 
     if let Some(tx) = state
@@ -401,27 +465,43 @@ fn apply_action(action: &crate::protocol::ActionDef, current_content: &str) -> S
     let line = match action.name.as_str() {
         "MakeDough" => "".to_string(),
         "AddBase" => {
-            let base = action.params.get("base_type").map(String::as_str).unwrap_or("unknown");
+            let base = action
+                .params
+                .get("base_type")
+                .map(String::as_str)
+                .unwrap_or("unknown");
             format!("Dough + Base({base}): ready\n")
         }
         "AddCheese" => {
-            let amount = action.params.get("amount").map(String::as_str).unwrap_or("1");
+            let amount = action
+                .params
+                .get("amount")
+                .map(String::as_str)
+                .unwrap_or("1");
             format!("Cheese x{amount}\n")
         }
         "AddPepperoni" => {
-            let slices = action.params.get("slices").map(String::as_str).unwrap_or("0");
+            let slices = action
+                .params
+                .get("slices")
+                .map(String::as_str)
+                .unwrap_or("0");
             format!("Pepperoni slices x{slices}\n")
         }
         "Bake" => {
-            let duration = action.params.get("duration").map(String::as_str).unwrap_or("0");
+            let duration = action
+                .params
+                .get("duration")
+                .map(String::as_str)
+                .unwrap_or("0");
             format!("Baked({duration})\n")
         }
-        "AddOliveOil"  => "OliveOil: added\n".to_string(),
+        "AddOliveOil" => "OliveOil: added\n".to_string(),
         "AddMushrooms" => "Mushrooms: added\n".to_string(),
-        "AddBasil"     => "Basil: added\n".to_string(),
-        "AddGarlic"    => "Garlic: added\n".to_string(),
-        "AddOregano"   => "Oregano: added\n".to_string(),
-        other          => format!("{other}: done\n"),
+        "AddBasil" => "Basil: added\n".to_string(),
+        "AddGarlic" => "Garlic: added\n".to_string(),
+        "AddOregano" => "Oregano: added\n".to_string(),
+        other => format!("{other}: done\n"),
     };
     format!("{current_content}{line}")
 }
@@ -476,7 +556,6 @@ fn forward_to_peer(peer: &str, message: &TcpMessage) -> Result<TcpMessage, Strin
     let response = from_cbor(&response_bytes).map_err(|e| format!("decode response: {e}"))?;
     Ok(response)
 }
-
 
 fn try_forward_get_recipe(recipe_name: &str, candidate_peers: &[String]) -> Option<TcpMessage> {
     let forwarded = TcpMessage::GetRecipe {
@@ -729,9 +808,16 @@ mod tests {
                     "MakeDough should produce no content, got: {:?}",
                     payload.content
                 );
-                assert_eq!(payload.action_index, 1, "action_index should be past MakeDough");
+                assert_eq!(
+                    payload.action_index, 1,
+                    "action_index should be past MakeDough"
+                );
                 // updates: Action{MakeDough} + Forward{delivery_host}
-                assert_eq!(payload.updates.len(), 2, "expected Action + Forward updates");
+                assert_eq!(
+                    payload.updates.len(),
+                    2,
+                    "expected Action + Forward updates"
+                );
             }
             other => panic!("expected Deliver at listener, got {other:?}"),
         }
@@ -740,29 +826,20 @@ mod tests {
     #[test]
     fn handle_process_payload_reports_candidate_peer_when_missing_capability() {
         let state = build_state(vec!["Bake"], vec![]);
-        {
-            let mut gossip = state.gossip.write().unwrap();
-            // Port 19999 is used so tests never hit a real running agent.
-            gossip.peers.insert(
-                "127.0.0.1:19999".to_string(),
-                PeerInfo {
-                    capabilities: vec!["MakeDough".to_string()],
-                    recipes: vec![],
-                    version: Version {
-                        counter: 3,
-                        generation: 1,
-                    },
-                    last_seen_us: 1,
-                    ping_sent_us: None,
-                    rtt_us: None,
-                },
-            );
-        }
+        let deliver_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let delivery_addr = deliver_listener.local_addr().unwrap().to_string();
+
+        // Accept the failure deliver and inspect its payload + error.
+        let deliver_handle: thread::JoinHandle<TcpMessage> = thread::spawn(move || {
+            let (mut stream, _) = deliver_listener.accept().unwrap();
+            let bytes = read_frame(&mut stream).unwrap();
+            from_cbor(&bytes).unwrap()
+        });
 
         let payload = ProcessPayload {
             order_id: crate::protocol::uuid(uuid::Uuid::nil()),
             order_timestamp: 1,
-            delivery_host: crate::protocol::addr("127.0.0.1:9000"),
+            delivery_host: crate::protocol::addr(delivery_addr),
             action_index: 0,
             action_sequence: vec![ActionDef {
                 name: "MakeDough".to_string(),
@@ -774,12 +851,137 @@ mod tests {
 
         let response = handle_process_payload(&state, "TestRecipe", payload);
 
-        match response {
-            TcpMessage::Error { message } => {
-                assert!(message.contains("cannot execute action"));
-                assert!(message.contains("127.0.0.1:19999"));
+        assert!(
+            matches!(response, TcpMessage::CompletedOrder { ref result, .. } if result.is_empty()),
+            "expected placeholder CompletedOrder after failure deliver, got {response:?}"
+        );
+
+        let received = deliver_handle.join().unwrap();
+        match received {
+            TcpMessage::Deliver { payload, error } => {
+                assert_eq!(payload.action_index, 0, "action should not advance");
+                assert_eq!(
+                    error.as_deref(),
+                    Some("Action MakeDough not available"),
+                    "expected business failure in deliver"
+                );
             }
-            _ => panic!("expected Error response"),
+            other => panic!("expected Deliver, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn handle_deliver_with_error_signals_failed_order() {
+        let state = build_state(vec!["MakeDough"], vec![]);
+        let order_id = uuid::Uuid::new_v4();
+        let order_id_str = order_id.to_string();
+        let (tx, rx) = mpsc::sync_channel(1);
+        state
+            .pending_orders
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(order_id_str.clone(), tx);
+
+        let payload = ProcessPayload {
+            order_id: crate::protocol::uuid(order_id),
+            order_timestamp: 1,
+            delivery_host: crate::protocol::addr("127.0.0.1:9000"),
+            action_index: 0,
+            action_sequence: vec![],
+            content: String::new(),
+            updates: vec![],
+        };
+
+        let _ack = handle_deliver(
+            &state,
+            payload,
+            Some("Action AddBasil not available".to_string()),
+        );
+        let delivered = rx.recv().expect("expected failed order through channel");
+
+        assert!(
+            matches!(delivered, TcpMessage::FailedOrder { ref error, .. } if error == "Action AddBasil not available"),
+            "expected FailedOrder signaled to waiting order handler, got {delivered:?}"
+        );
+    }
+
+    #[test]
+    fn handle_order_returns_failed_order_when_remote_reports_unavailable_action() {
+        // Origin agent receives the client order and waits for deliver.
+        let (state, deliver_listener) = build_arc_state(vec![], vec![]);
+        spawn_deliver_handler(deliver_listener, Arc::clone(&state));
+
+        // Remote peer that advertises recipe + MakeDough but fails on AddBasil.
+        let remote_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let remote_addr = remote_listener.local_addr().unwrap().to_string();
+        {
+            let mut gossip = state.gossip.write().unwrap_or_else(|e| e.into_inner());
+            gossip.peers.insert(
+                remote_addr.clone(),
+                PeerInfo {
+                    capabilities: vec!["MakeDough".to_string()],
+                    recipes: vec!["Margherita".to_string()],
+                    version: Version {
+                        counter: 2,
+                        generation: 1,
+                    },
+                    last_seen_us: 1,
+                    ping_sent_us: None,
+                    rtt_us: None,
+                },
+            );
+        }
+
+        let delivery_addr = state.identity.addr.clone();
+        let remote_handle = thread::spawn(move || {
+            for _ in 0..2 {
+                let (mut stream, _) = remote_listener.accept().unwrap();
+                let req_bytes = read_frame(&mut stream).unwrap();
+                let req: TcpMessage = from_cbor(&req_bytes).unwrap();
+
+                match req {
+                    TcpMessage::GetRecipe { recipe_name } => {
+                        assert_eq!(recipe_name, "Margherita");
+                        let recipe = "Margherita = MakeDough -> AddBasil(leaves=3)".to_string();
+                        let resp = TcpMessage::RecipeAnswer { recipe };
+                        let resp_bytes = to_cbor(&resp).unwrap();
+                        write_frame(&mut stream, &resp_bytes).unwrap();
+                    }
+                    TcpMessage::ProcessPayload { payload } => {
+                        // Simulate last-capable peer sending deliver failure to ordering host.
+                        let deliver = TcpMessage::Deliver {
+                            payload,
+                            error: Some("Action AddBasil not available".to_string()),
+                        };
+                        send_deliver(&delivery_addr, &deliver).unwrap();
+
+                        // Return placeholder response to satisfy forward_to_peer.
+                        let resp = TcpMessage::CompletedOrder {
+                            recipe_name: "unknown".to_string(),
+                            result: String::new(),
+                        };
+                        let resp_bytes = to_cbor(&resp).unwrap();
+                        write_frame(&mut stream, &resp_bytes).unwrap();
+                    }
+                    other => panic!("unexpected request at remote peer: {other:?}"),
+                }
+            }
+        });
+
+        let (mut client, mut server) = make_stream_pair();
+        let response = handle_order(&state, "Margherita", &mut server);
+
+        let receipt_bytes = read_frame(&mut client).unwrap();
+        let receipt: TcpMessage = from_cbor(&receipt_bytes).unwrap();
+        assert!(
+            matches!(receipt, TcpMessage::OrderReceipt { .. }),
+            "expected OrderReceipt as frame 1, got {receipt:?}"
+        );
+        assert!(
+            matches!(response, TcpMessage::FailedOrder { ref recipe_name, ref error } if recipe_name == "Margherita" && error == "Action AddBasil not available"),
+            "expected FailedOrder as frame 2, got {response:?}"
+        );
+
+        remote_handle.join().unwrap();
     }
 }

@@ -3,3 +3,34 @@ cargo run -- start --host 127.0.0.1:8000 --capabilities MakeDough --recipes-file
 cargo run -- start --host 127.0.0.1:8000 --capabilities AddBase,AddCheese,AddPepperoni,Bake,AddOliveOil --recipes-file src/recipes/examples.recipes
 
 cargo run -- start --host 127.0.0.1:8002 --capabilities AddBase,AddCheese,AddPepperoni,Bake,AddOliveOil --peer 127.0.0.1:8000 --debug
+
+## Une commande déclenchée par votre client aboutit à une pizza livrée, en impliquant au moins une étape exécutée par votre agent et au moins une étape exécutée par le binaire fourni.
+
+./pizza_factory start --host 127.0.0.1:8000 --capabilities MakeDough --recipes-file recipes/examples.recipes --debug
+
+./pizza_factory start --host 127.0.0.1:8002 --capabilities AddPepperoni,AddOliveOil,AddGarlic --peer 127.0.0.1:8000 --debug
+
+cargo run -- start --host 127.0.0.1:8003 --capabilities AddBase,AddCheese,Bake,AddMushrooms,AddOregano --peer 127.0.0.1:8000 --debug
+cargo run -- start --host 127.0.0.1:8003 --capabilities AddBase,AddCheese,Bake,AddMushrooms,AddOregano,AddBasil,AddOregano,AddGarlic --peer 127.0.0.1:8000 --debug
+
+### Pizza tested
+./pizza_factory client --peer 127.0.0.1:8000 order Funghi
+./pizza_factory client --peer 127.0.0.1:8002 order Funghi
+./pizza_factory client --peer 127.0.0.1:8003 order Funghi
+
+./pizza_factory client --peer 127.0.0.1:8000 order Pepperoni
+./pizza_factory client --peer 127.0.0.1:8002 order Pepperoni
+./pizza_factory client --peer 127.0.0.1:8003 order Pepperoni
+
+./pizza_factory client --peer 127.0.0.1:8000 order Marinara
+./pizza_factory client --peer 127.0.0.1:8002 order Marinara
+./pizza_factory client --peer 127.0.0.1:8003 order Marinara
+
+--remove AddBasil from the agent capabilities: to test case when pizza has a step that none agent can do.
+./pizza_factory client --peer 127.0.0.1:8000 order Margherita
+./pizza_factory client --peer 127.0.0.1:8002 order Margherita
+./pizza_factory client --peer 127.0.0.1:8003 order Margherita
+
+./pizza_factory client --peer 127.0.0.1:8000 order QuattroFormaggi
+./pizza_factory client --peer 127.0.0.1:8002 order QuattroFormaggi
+./pizza_factory client --peer 127.0.0.1:8003 order QuattroFormaggi
