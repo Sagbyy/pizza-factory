@@ -87,6 +87,11 @@ pub fn now_ms() -> u64 {
 }
 
 fn save_to_file(orders: &HashMap<u128, Order>) {
+    if let Err(e) = std::fs::create_dir_all("db") {
+        log::error!(target: "store", "Failed to create store directory: {e}");
+        return;
+    }
+
     match serde_json::to_string(orders) {
         Ok(json) => {
             if let Err(e) = write(PATH, &json) {
@@ -143,10 +148,21 @@ mod tests {
 
     static TEST_MUTEX: Mutex<()> = Mutex::new(());
 
+    fn lock_test_mutex() -> std::sync::MutexGuard<'static, ()> {
+        match TEST_MUTEX.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        }
+    }
+
     fn clear_orders() {
+        let _ = std::fs::create_dir_all("db");
         let _ = remove_file(PATH);
         if let Some(orders) = ORDERS.get() {
-            orders.write().unwrap().clear();
+            match orders.write() {
+                Ok(mut guard) => guard.clear(),
+                Err(poisoned) => poisoned.into_inner().clear(),
+            }
         } else {
             ORDERS.set(RwLock::new(HashMap::new())).ok();
         }
@@ -164,7 +180,7 @@ mod tests {
 
     #[test]
     fn test_add_order() {
-        let _lock = TEST_MUTEX.lock().unwrap();
+        let _lock = lock_test_mutex();
         clear_orders();
 
         add_order(make_order(1, "margherita"));
@@ -173,7 +189,7 @@ mod tests {
 
     #[test]
     fn test_add_multiple_orders() {
-        let _lock = TEST_MUTEX.lock().unwrap();
+        let _lock = lock_test_mutex();
         clear_orders();
 
         add_order(make_order(1, "margherita"));
@@ -183,7 +199,7 @@ mod tests {
 
     #[test]
     fn test_add_order_overwrites_same_id() {
-        let _lock = TEST_MUTEX.lock().unwrap();
+        let _lock = lock_test_mutex();
         clear_orders();
 
         add_order(make_order(1, "margherita"));
@@ -196,7 +212,7 @@ mod tests {
 
     #[test]
     fn test_update_order_server_id() {
-        let _lock = TEST_MUTEX.lock().unwrap();
+        let _lock = lock_test_mutex();
         clear_orders();
 
         add_order(make_order(1, "margherita"));
@@ -208,7 +224,7 @@ mod tests {
 
     #[test]
     fn test_update_order_status() {
-        let _lock = TEST_MUTEX.lock().unwrap();
+        let _lock = lock_test_mutex();
         clear_orders();
 
         add_order(make_order(1, "margherita"));
@@ -220,7 +236,7 @@ mod tests {
 
     #[test]
     fn test_update_order_status_failed() {
-        let _lock = TEST_MUTEX.lock().unwrap();
+        let _lock = lock_test_mutex();
         clear_orders();
 
         add_order(make_order(1, "margherita"));
@@ -232,7 +248,7 @@ mod tests {
 
     #[test]
     fn test_update_nonexistent_order_does_not_panic() {
-        let _lock = TEST_MUTEX.lock().unwrap();
+        let _lock = lock_test_mutex();
         clear_orders();
 
         update_order_status(999, OrderStatus::Delivered);
@@ -241,7 +257,7 @@ mod tests {
 
     #[test]
     fn test_file_created_on_add() {
-        let _lock = TEST_MUTEX.lock().unwrap();
+        let _lock = lock_test_mutex();
         clear_orders();
 
         add_order(make_order(1, "margherita"));
@@ -250,7 +266,7 @@ mod tests {
 
     #[test]
     fn test_file_deleted_on_drop() {
-        let _lock = TEST_MUTEX.lock().unwrap();
+        let _lock = lock_test_mutex();
         clear_orders();
         add_order(make_order(1, "margherita"));
         assert!(std::path::Path::new(PATH).exists());
