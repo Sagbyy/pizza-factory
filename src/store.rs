@@ -1,7 +1,25 @@
 use std::collections::HashMap;
+use std::fs::{remove_file, write};
 use std::sync::{OnceLock, RwLock};
+use std::time::{SystemTime, UNIX_EPOCH};
 
-#[derive(Clone)]
+use serde::{Deserialize, Serialize};
+
+const PATH: &str = "db/orders.json";
+
+pub struct StoreGuard {
+    pub delete_on_drop: bool,
+}
+
+impl Drop for StoreGuard {
+    fn drop(&mut self) {
+        if self.delete_on_drop {
+            let _ = remove_file(PATH);
+        }
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 pub enum OrderStatus {
     Sending,
     Receipt,
@@ -11,30 +29,63 @@ pub enum OrderStatus {
     Error(String),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Order {
     pub id: u128,
     pub server_id: Option<String>,
     pub recipe_name: String,
     pub status: OrderStatus,
-    pub timestamp: std::time::SystemTime,
+    pub timestamp_ms: u64,
+}
+
+impl Order {
+    pub fn elapsed_ms(&self) -> u128 {
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis();
+        now_ms.saturating_sub(self.timestamp_ms as u128)
+    }
 }
 
 pub static ORDERS: OnceLock<RwLock<HashMap<u128, Order>>> = OnceLock::new();
 
-pub fn init_store() {
-    ORDERS.set(RwLock::new(HashMap::new())).ok();
+pub fn init_store() -> StoreGuard {
+    let _ = std::fs::create_dir_all("db");
+
+    let map = std::fs::read_to_string(PATH)
+        .ok()
+        .and_then(|json| serde_json::from_str(&json).ok())
+        .unwrap_or_default();
+
+    ORDERS.set(RwLock::new(map)).ok();
+    StoreGuard { delete_on_drop: false }
+}
+
+pub fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
+fn save_to_file(orders: &HashMap<u128, Order>) {
+    if let Ok(json) = serde_json::to_string(orders) {
+        let _ = write(PATH, json);
+    }
 }
 
 pub fn add_order(order: Order) {
     let mut orders = ORDERS.get().unwrap().write().unwrap();
     orders.insert(order.id, order);
+    save_to_file(&orders);
 }
 
 pub fn update_order_server_id(id: u128, server_id: &str) {
     let mut orders = ORDERS.get().unwrap().write().unwrap();
     if let Some(order) = orders.get_mut(&id) {
         order.server_id = Some(server_id.to_string());
+        save_to_file(&orders);
     }
 }
 
@@ -42,25 +93,32 @@ pub fn update_order_status(id: u128, status: OrderStatus) {
     let mut orders = ORDERS.get().unwrap().write().unwrap();
     if let Some(order) = orders.get_mut(&id) {
         order.status = status;
+        save_to_file(&orders);
     }
 }
 
 pub fn get_orders() -> Vec<Order> {
-    let orders = ORDERS.get().unwrap().read().unwrap();
-    orders.values().cloned().collect()
+    std::fs::read_to_string(PATH)
+        .ok()
+        .and_then(|json| serde_json::from_str::<HashMap<u128, Order>>(&json).ok())
+        .map(|map| map.into_values().collect())
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::Mutex;
-    use std::time::SystemTime;
 
     static TEST_MUTEX: Mutex<()> = Mutex::new(());
 
     fn clear_orders() {
-        init_store();
-        ORDERS.get().unwrap().write().unwrap().clear();
+        let _ = remove_file(PATH);
+        if let Some(orders) = ORDERS.get() {
+            orders.write().unwrap().clear();
+        } else {
+            ORDERS.set(RwLock::new(HashMap::new())).ok();
+        }
     }
 
     fn make_order(id: u128, recipe: &str) -> Order {
@@ -69,7 +127,7 @@ mod tests {
             server_id: None,
             recipe_name: recipe.to_string(),
             status: OrderStatus::Sending,
-            timestamp: SystemTime::now(),
+            timestamp_ms: now_ms(),
         }
     }
 
@@ -148,5 +206,24 @@ mod tests {
 
         update_order_status(999, OrderStatus::Delivered);
         update_order_server_id(999, "some-id");
+    }
+
+    #[test]
+    fn test_file_created_on_add() {
+        let _lock = TEST_MUTEX.lock().unwrap();
+        clear_orders();
+
+        add_order(make_order(1, "margherita"));
+        assert!(std::path::Path::new(PATH).exists());
+    }
+
+    #[test]
+    fn test_file_deleted_on_drop() {
+        let _lock = TEST_MUTEX.lock().unwrap();
+        clear_orders();
+        add_order(make_order(1, "margherita"));
+        assert!(std::path::Path::new(PATH).exists());
+        drop(StoreGuard { delete_on_drop: true });
+        assert!(!std::path::Path::new(PATH).exists());
     }
 }

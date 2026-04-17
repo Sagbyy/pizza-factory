@@ -5,7 +5,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::network::tcp::{read_frame, write_frame};
 use crate::protocol::{TcpMessage, from_cbor, to_cbor};
-use crate::store::{self, Order, OrderStatus};
+use crate::store::{self, Order, OrderStatus, now_ms};
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -202,7 +202,7 @@ pub fn client_order(peer: &str, recipe_name: &str) -> io::Result<()> {
         server_id: None,
         recipe_name: recipe_name.to_string(),
         status: OrderStatus::Sending,
-        timestamp: SystemTime::now(),
+        timestamp_ms: now_ms(),
     });
 
     match frame1 {

@@ -11,6 +11,7 @@ use tui_logger::{TuiLoggerTargetWidget, TuiLoggerWidget};
 use crate::cli::start_tui::StartTuiArgs;
 use crate::node::NodeState;
 use crate::recipe::flatten_recipe;
+use crate::store::{self, OrderStatus};
 use crate::tui::app::{App, Mode};
 
 pub fn render_ui(frame: &mut Frame, app: &App, _args: &StartTuiArgs) {
@@ -37,8 +38,34 @@ pub fn render_ui(frame: &mut Frame, app: &App, _args: &StartTuiArgs) {
 }
 
 fn render_recent_orders_block(frame: &mut Frame, area: Rect) {
+    let orders = store::get_orders();
+    let lines: Vec<Line> = orders
+        .iter()
+        .map(|order| {
+            let elapsed_ms = order.elapsed_ms();
+            let id = match order.server_id.as_ref() {
+                Some(sid) => sid.clone(),
+                None => format!("local-{}", order.id),
+            }.chars().take(8).collect::<String>();
+
+            let (status_str, status_style) = match &order.status {
+                OrderStatus::Sending => ("Sending".to_string(), Style::new().dark_gray()),
+                OrderStatus::Receipt => ("Receipt".to_string(), Style::new().yellow()),
+                OrderStatus::Delivered => ("Delivered".to_string(), Style::new().green()),
+                OrderStatus::Declined(msg) => (format!("Declined: {msg}"), Style::new().red()),
+                OrderStatus::Failed(msg) => (format!("Failed: {msg}"), Style::new().red()),
+                OrderStatus::Error(msg) => (format!("Error: {msg}"), Style::new().red()),
+            };
+
+            Line::from(vec![
+                Span::raw(format!("[{id}] {} ({elapsed_ms}ms ago) - ", order.recipe_name)),
+                Span::styled(status_str, status_style),
+            ])
+        })
+        .collect();
+
     frame.render_widget(
-        Paragraph::new("").block(
+        Paragraph::new(lines).block(
             Block::bordered()
                 .title("Recent Orders")
                 .border_style(Style::new().light_cyan()),

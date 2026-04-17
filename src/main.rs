@@ -25,7 +25,11 @@ use std::thread;
 
 fn main() {
     let cli = Cli::parse();
-    store::init_store();
+    let mut _store_guard = store::init_store();
+
+    if matches!(cli.command, Commands::Start(_) | Commands::StartTui(_)) {
+        _store_guard.delete_on_drop = true;
+    }
 
     match cli.command {
         Commands::Start(args) => {
