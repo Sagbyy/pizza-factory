@@ -13,6 +13,10 @@ cargo run -- start --host 127.0.0.1:8002 --capabilities AddBase,AddCheese,AddPep
 cargo run -- start --host 127.0.0.1:8003 --capabilities AddBase,AddCheese,Bake,AddMushrooms,AddOregano --peer 127.0.0.1:8000 --debug
 cargo run -- start --host 127.0.0.1:8003 --capabilities AddBase,AddCheese,Bake,AddMushrooms,AddOregano,AddBasil,AddOregano,AddGarlic --peer 127.0.0.1:8000 --debug
 
+### List recipes tested
+cargo run -- start --host 127.0.0.1:8003 --capabilities MakeDough --recipes-file src/recipes/examples.recipes --debug
+./pizza_factory start --host 127.0.0.1:8002 --capabilities AddPepperoni,AddOliveOil,AddGarlic --peer 127.0.0.1:8003 --debug
+
 ### Pizza tested
 ./pizza_factory client --peer 127.0.0.1:8000 order Funghi
 ./pizza_factory client --peer 127.0.0.1:8002 order Funghi

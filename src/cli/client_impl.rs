@@ -4,7 +4,7 @@ use std::net::TcpStream;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::network::tcp::{read_frame, write_frame};
-use crate::protocol::{TcpMessage, from_cbor, to_cbor};
+use crate::protocol::{NodeAddr, RecipeAvailability, TcpMessage, from_cbor, to_cbor};
 use crate::store::{self, Order, OrderStatus, now_ms};
 use serde::Deserialize;
 use uuid::Uuid;
@@ -23,9 +23,29 @@ struct RecipeAvailabilityCompat {
     missing_actions: Vec<String>,
     #[serde(default)]
     remote_peers: Vec<String>,
+    #[serde(default)]
+    remote: Option<RemoteRecipeCompat>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RemoteRecipeCompat {
+    host: NodeAddr,
 }
 
 impl RecipeAvailabilityCompat {
+    fn remote_host(&self) -> Option<String> {
+        if let Some(remote) = &self.remote {
+            return Some(remote.host.0.clone());
+        }
+        if self.remote_peers.is_empty() {
+            None
+        } else {
+            let mut peers = self.remote_peers.clone();
+            peers.sort();
+            peers.into_iter().next()
+        }
+    }
+
     fn effective_missing_actions(&self) -> &[String] {
         if !self.local.missing_actions.is_empty() {
             &self.local.missing_actions
@@ -78,16 +98,34 @@ fn log_info(msg: &str) {
     println!("{}  INFO {}", now_rfc3339(), msg);
 }
 
-fn print_recipe_row(name: &str, missing_actions: &[String], remote_peers: &[String]) {
-    if !remote_peers.is_empty() {
-        println!("  - {}: available at [{}]", name, remote_peers.join(", "));
-    } else if missing_actions.is_empty() {
+fn print_recipe_row(name: &str, availability: &RecipeAvailability) {
+    match availability {
+        RecipeAvailability::Remote { remote } => {
+            println!("  - {}: available at [{}]", name, remote.host.0);
+        }
+        RecipeAvailability::Local { local } if local.missing_actions.is_empty() => {
+            println!("  - {}: local (complete)", name);
+        }
+        RecipeAvailability::Local { local } => {
+            println!(
+                "  - {}: missing actions [{}]",
+                name,
+                local.missing_actions.join(", ")
+            );
+        }
+    }
+}
+
+fn print_recipe_row_compat(name: &str, availability: &RecipeAvailabilityCompat) {
+    if let Some(host) = availability.remote_host() {
+        println!("  - {}: available at [{}]", name, host);
+    } else if availability.effective_missing_actions().is_empty() {
         println!("  - {}: local (complete)", name);
     } else {
         println!(
             "  - {}: missing actions [{}]",
             name,
-            missing_actions.join(", ")
+            availability.effective_missing_actions().join(", ")
         );
     }
 }
@@ -108,11 +146,7 @@ pub fn client_list_recipes(peer: &str) -> io::Result<()> {
         Ok(TcpMessage::RecipeListAnswer { recipes }) => {
             println!("Available recipes:");
             for (name, availability) in recipes {
-                print_recipe_row(
-                    &name,
-                    &availability.local.missing_actions,
-                    &availability.remote_peers,
-                );
+                print_recipe_row(&name, &availability);
             }
         }
         Ok(TcpMessage::Error { message }) => {
@@ -127,11 +161,7 @@ pub fn client_list_recipes(peer: &str) -> io::Result<()> {
                 TcpMessageCompat::RecipeListAnswer { recipes } => {
                     println!("Available recipes:");
                     for (name, availability) in recipes {
-                        print_recipe_row(
-                            &name,
-                            availability.effective_missing_actions(),
-                            &availability.remote_peers,
-                        );
+                        print_recipe_row_compat(&name, &availability);
                     }
                 }
                 TcpMessageCompat::Error { message } => {

@@ -7,8 +7,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::network::tcp::{read_frame, write_frame};
 use crate::node::NodeState;
 use crate::protocol::{
-    OrderResult, ProcessPayload, RecipeAvailability, RecipeStatus, TcpMessage, Update, addr,
-    from_cbor, to_cbor, uuid,
+    OrderResult, ProcessPayload, RecipeAvailability, RecipeStatus, RemoteRecipeStatus, TcpMessage,
+    Update, addr, from_cbor, to_cbor, uuid,
 };
 use crate::recipe::{flatten_recipe, parse_recipes};
 use uuid::Uuid;
@@ -42,33 +42,38 @@ pub fn handle_list_recipes(state: &NodeState) -> TcpMessage {
 
             (
                 recipe.name.clone(),
-                RecipeAvailability {
+                RecipeAvailability::Local {
                     local: RecipeStatus {
                         missing_actions: missing,
                     },
-                    remote_peers: vec![],
                 },
             )
         })
         .collect();
 
-    // Add recipes discovered via gossip from remote peers.
+    // Add recipes discovered via gossip from remote peers using a deterministic host.
+    let mut remote_hosts: HashMap<String, String> = HashMap::new();
     {
         let gossip = state.gossip.read().unwrap_or_else(|e| e.into_inner());
         for (peer_addr, peer_info) in &gossip.peers {
             for recipe_name in &peer_info.recipes {
-                recipes
+                remote_hosts
                     .entry(recipe_name.clone())
-                    .or_insert_with(|| RecipeAvailability {
-                        local: RecipeStatus {
-                            missing_actions: vec![],
-                        },
-                        remote_peers: vec![],
+                    .and_modify(|current_host| {
+                        if peer_addr < current_host {
+                            *current_host = peer_addr.clone();
+                        }
                     })
-                    .remote_peers
-                    .push(peer_addr.clone());
+                    .or_insert_with(|| peer_addr.clone());
             }
         }
+    }
+    for (recipe_name, host) in remote_hosts {
+        recipes
+            .entry(recipe_name)
+            .or_insert_with(|| RecipeAvailability::Remote {
+                remote: RemoteRecipeStatus { host: addr(host) },
+            });
     }
 
     TcpMessage::RecipeListAnswer { recipes }
@@ -638,6 +643,105 @@ mod tests {
                 },
             }),
             pending_orders: Mutex::new(HashMap::new()),
+        }
+    }
+
+    #[test]
+    fn handle_list_recipes_returns_local_entries_when_local_recipes_exist() {
+        let state = build_state(vec!["MakeDough"], vec!["Margherita"]);
+        let response = handle_list_recipes(&state);
+
+        match response {
+            TcpMessage::RecipeListAnswer { recipes } => match recipes.get("Margherita") {
+                Some(RecipeAvailability::Local { local }) => {
+                    assert!(
+                        local.missing_actions.is_empty(),
+                        "expected local recipe to be complete"
+                    );
+                }
+                other => panic!("expected local availability, got {other:?}"),
+            },
+            other => panic!("expected RecipeListAnswer, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn handle_list_recipes_returns_remote_host_when_recipe_is_remote_only() {
+        let state = build_state(vec![], vec![]);
+        {
+            let mut gossip = state.gossip.write().unwrap_or_else(|e| e.into_inner());
+            gossip.peers.insert(
+                "127.0.0.1:8000".to_string(),
+                PeerInfo {
+                    capabilities: vec!["MakeDough".to_string()],
+                    recipes: vec!["Margherita".to_string()],
+                    version: Version {
+                        counter: 1,
+                        generation: 1,
+                    },
+                    last_seen_us: 1,
+                    ping_sent_us: None,
+                    rtt_us: None,
+                },
+            );
+        }
+
+        let response = handle_list_recipes(&state);
+        match response {
+            TcpMessage::RecipeListAnswer { recipes } => match recipes.get("Margherita") {
+                Some(RecipeAvailability::Remote { remote }) => {
+                    assert_eq!(remote.host.0, "127.0.0.1:8000");
+                }
+                other => panic!("expected remote availability, got {other:?}"),
+            },
+            other => panic!("expected RecipeListAnswer, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn handle_list_recipes_remote_host_is_deterministic_across_multiple_peers() {
+        let state = build_state(vec![], vec![]);
+        {
+            let mut gossip = state.gossip.write().unwrap_or_else(|e| e.into_inner());
+            gossip.peers.insert(
+                "127.0.0.1:8002".to_string(),
+                PeerInfo {
+                    capabilities: vec!["MakeDough".to_string()],
+                    recipes: vec!["Margherita".to_string()],
+                    version: Version {
+                        counter: 1,
+                        generation: 1,
+                    },
+                    last_seen_us: 1,
+                    ping_sent_us: None,
+                    rtt_us: None,
+                },
+            );
+            gossip.peers.insert(
+                "127.0.0.1:8000".to_string(),
+                PeerInfo {
+                    capabilities: vec!["Bake".to_string()],
+                    recipes: vec!["Margherita".to_string()],
+                    version: Version {
+                        counter: 1,
+                        generation: 1,
+                    },
+                    last_seen_us: 1,
+                    ping_sent_us: None,
+                    rtt_us: None,
+                },
+            );
+        }
+
+        let response = handle_list_recipes(&state);
+        match response {
+            TcpMessage::RecipeListAnswer { recipes } => match recipes.get("Margherita") {
+                Some(RecipeAvailability::Remote { remote }) => {
+                    assert_eq!(remote.host.0, "127.0.0.1:8000");
+                }
+                other => panic!("expected remote availability, got {other:?}"),
+            },
+            other => panic!("expected RecipeListAnswer, got {other:?}"),
         }
     }
 
