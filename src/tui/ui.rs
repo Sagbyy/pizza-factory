@@ -221,6 +221,11 @@ fn render_tui_target(frame: &mut Frame, app: &App, area: Rect) {
 
 fn render_tui_log(frame: &mut Frame, app: &App, area: Rect) {
     let widget = TuiLoggerWidget::default()
+        .style_error(Style::new().red().bold())
+        .style_warn(Style::new().yellow())
+        .style_info(Style::new().white())
+        .style_debug(Style::new().blue())
+        .style_trace(Style::new().gray())
         .block(Block::bordered().title("Tui Log"))
         .state(&app.logger_state);
     frame.render_widget(widget, area);

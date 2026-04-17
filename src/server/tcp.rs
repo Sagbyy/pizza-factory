@@ -20,7 +20,10 @@ pub fn start(state: Arc<NodeState>) -> Result<thread::JoinHandle<()>, io::Error>
         for stream in listener.incoming() {
             match stream {
                 Ok(stream) => {
-                    let peer = stream.peer_addr().map(|a| a.to_string()).unwrap_or_else(|_| "unknown".into());
+                    let peer = stream
+                        .peer_addr()
+                        .map(|a| a.to_string())
+                        .unwrap_or_else(|_| "unknown".into());
                     log::debug!(target: "network", "TCP connection accepted from {}", peer);
                     let state = Arc::clone(&state);
                     thread::spawn(move || handle_connection(stream, state));
