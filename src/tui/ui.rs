@@ -5,12 +5,13 @@ use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Paragraph};
+use ratatui::widgets::{Block, Paragraph, Wrap};
 use tui_logger::{TuiLoggerTargetWidget, TuiLoggerWidget};
 
 use crate::cli::start_tui::StartTuiArgs;
 use crate::node::NodeState;
 use crate::recipe::flatten_recipe;
+use crate::store::{self, OrderStatus};
 use crate::tui::app::{App, Mode};
 
 pub fn render_ui(frame: &mut Frame, app: &App, _args: &StartTuiArgs) {
@@ -25,8 +26,11 @@ pub fn render_ui(frame: &mut Frame, app: &App, _args: &StartTuiArgs) {
     let [left, right] =
         Layout::horizontal([Constraint::Percentage(25), Constraint::Percentage(75)]).areas(top);
 
-    let [target, log] =
-        Layout::horizontal([Constraint::Length(17), Constraint::Fill(1)]).areas(logger);
+    let [target, log] = if app.show_targets {
+        Layout::horizontal([Constraint::Length(30), Constraint::Fill(1)]).areas(logger)
+    } else {
+        Layout::horizontal([Constraint::Length(0), Constraint::Fill(1)]).areas(logger)
+    };
 
     render_recent_orders_block(frame, left);
     render_local_agent_status_block(frame, right, app);
@@ -37,8 +41,42 @@ pub fn render_ui(frame: &mut Frame, app: &App, _args: &StartTuiArgs) {
 }
 
 fn render_recent_orders_block(frame: &mut Frame, area: Rect) {
+    let mut orders = store::get_orders();
+    orders.sort_by_key(|o| o.timestamp_ms);
+
+    let lines: Vec<Line> = orders
+        .iter()
+        .map(|order| {
+            let elapsed_ms = order.elapsed_ms();
+            let id = match order.server_id.as_ref() {
+                Some(sid) => sid.clone(),
+                None => format!("local-{}", order.id),
+            }
+            .chars()
+            .take(8)
+            .collect::<String>();
+
+            let (status_str, status_style) = match &order.status {
+                OrderStatus::Sending => ("Sending".to_string(), Style::new().dark_gray()),
+                OrderStatus::Receipt => ("Receipt".to_string(), Style::new().yellow()),
+                OrderStatus::Delivered => ("Delivered".to_string(), Style::new().green()),
+                OrderStatus::Declined(msg) => (format!("Declined: {msg}"), Style::new().red()),
+                OrderStatus::Failed(msg) => (format!("Failed: {msg}"), Style::new().red()),
+                OrderStatus::Error(msg) => (format!("Error: {msg}"), Style::new().red()),
+            };
+
+            Line::from(vec![Span::styled(
+                format!(
+                    "[{id}] {} ({elapsed_ms}ms ago) - {}",
+                    order.recipe_name, status_str
+                ),
+                status_style,
+            )])
+        })
+        .collect();
+
     frame.render_widget(
-        Paragraph::new("").block(
+        Paragraph::new(lines).wrap(Wrap { trim: false }).block(
             Block::bordered()
                 .title("Recent Orders")
                 .border_style(Style::new().light_cyan()),
@@ -102,12 +140,14 @@ fn render_local_agent_status_block(frame: &mut Frame, area: Rect, app: &App) {
             Span::styled("Recipes: ", Style::new().bold()),
             Span::raw(recipes_str),
         ]),
-        Line::from(Span::styled("Peers:", Style::new().bold())),
         Line::from(Span::styled("Known peers:", Style::new().bold())),
     ];
 
     let mut sorted_peers: Vec<_> = gossip.peers.iter().collect();
     sorted_peers.sort_by_key(|(addr, _)| addr.as_str());
+
+    let my_addr = &state.identity.addr;
+    sorted_peers.retain(|(addr, _)| *addr != my_addr);
 
     if sorted_peers.is_empty() {
         lines.push(Line::from(Span::raw("  (none)")));
@@ -130,12 +170,17 @@ fn render_local_agent_status_block(frame: &mut Frame, area: Rect, app: &App) {
     }
 
     lines.push(Line::from(vec![
+        Span::styled("Host: ", Style::new().bold()),
+        Span::raw(state.identity.addr.as_str()),
+    ]));
+
+    lines.push(Line::from(vec![
         Span::styled("Current version: ", Style::new().bold()),
         Span::raw(version_str),
     ]));
 
     frame.render_widget(
-        Paragraph::new(lines).block(
+        Paragraph::new(lines).wrap(Wrap { trim: false }).block(
             Block::bordered()
                 .title("Local Agent Status")
                 .border_style(Style::new().light_cyan()),
@@ -179,6 +224,11 @@ fn render_tui_target(frame: &mut Frame, app: &App, area: Rect) {
 
 fn render_tui_log(frame: &mut Frame, app: &App, area: Rect) {
     let widget = TuiLoggerWidget::default()
+        .style_error(Style::new().red().bold())
+        .style_warn(Style::new().yellow())
+        .style_info(Style::new().white())
+        .style_debug(Style::new().blue())
+        .style_trace(Style::new().gray())
         .block(Block::bordered().title("Tui Log"))
         .state(&app.logger_state);
     frame.render_widget(widget, area);

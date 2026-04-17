@@ -341,6 +341,57 @@ Résumé:
 
 ![img_5.png](screenshots/img_5.png)
 
+- Quand le client appelle l'agent 8002 qui n'a pas de la liste de recettes, la réponse recipe list answer est différente de celle du cas où l'agent sollicité détient la liste. 
+![img.png](screenshots/img25.png)
+
+```json
+     {
+  "recipe_list_answer": {
+    "recipes": {
+      "Funghi": {
+        "remote": {
+          "host": {
+            "value": "127.0.0.1:8000",
+            "tag": 260
+          }
+        }
+      },
+      "Margherita": {
+        "remote": {
+          "host": {
+            "value": "127.0.0.1:8000",
+            "tag": 260
+          }
+        }
+      },
+      "Marinara": {
+        "remote": {
+          "host": {
+            "value": "127.0.0.1:8000",
+            "tag": 260
+          }
+        }
+      },
+      "Pepperoni": {
+        "remote": {
+          "host": {
+            "value": "127.0.0.1:8000",
+            "tag": 260
+          }
+        }
+      },
+      "QuattroFormaggi": {
+        "remote": {
+          "host": {
+            "value": "127.0.0.1:8000",
+            "tag": 260
+          }
+        }
+      }
+    }
+  }
+}
+```
 #### 2.2 Commande order Pepperoni
 Lancement d'un client, qui se connecte au premier agent :
 ```bash

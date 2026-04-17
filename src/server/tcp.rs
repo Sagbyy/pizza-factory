@@ -14,16 +14,22 @@ use crate::server::handlers;
 /// Returns `Err` immediately if the bind fails (port already in use, bad address, etc.).
 pub fn start(state: Arc<NodeState>) -> Result<thread::JoinHandle<()>, io::Error> {
     let listener = TcpListener::bind(&state.identity.addr)?;
+    log::info!(target: "network", "TCP server listening on {}", state.identity.addr);
 
     let handle = thread::spawn(move || {
         for stream in listener.incoming() {
             match stream {
                 Ok(stream) => {
+                    let peer = stream
+                        .peer_addr()
+                        .map(|a| a.to_string())
+                        .unwrap_or_else(|_| "unknown".into());
+                    log::debug!(target: "network", "TCP connection accepted from {}", peer);
                     let state = Arc::clone(&state);
                     thread::spawn(move || handle_connection(stream, state));
                 }
                 Err(e) => {
-                    eprintln!("TCP accept error: {e}");
+                    log::error!(target: "network", "TCP accept error: {e}");
                 }
             }
         }
@@ -44,7 +50,7 @@ fn handle_connection(mut stream: TcpStream, state: Arc<NodeState>) {
     let bytes = match read_frame(&mut stream) {
         Ok(b) => b,
         Err(e) => {
-            eprintln!("TCP read error: {e}");
+            log::error!(target: "network", "TCP read error: {e}");
             return;
         }
     };
@@ -52,7 +58,7 @@ fn handle_connection(mut stream: TcpStream, state: Arc<NodeState>) {
     let msg: TcpMessage = match from_cbor(&bytes) {
         Ok(m) => m,
         Err(e) => {
-            eprintln!("TCP decode error: {e}");
+            log::error!(target: "network", "TCP decode error: {e}");
             return;
         }
     };
@@ -76,30 +82,37 @@ fn handle_connection(mut stream: TcpStream, state: Arc<NodeState>) {
     let response_bytes = match to_cbor(&response) {
         Ok(b) => b,
         Err(e) => {
-            eprintln!("TCP encode error: {e}");
+            log::error!(target: "network", "TCP encode error: {e}");
             return;
         }
     };
 
     if let Err(e) = write_frame(&mut stream, &response_bytes) {
-        eprintln!("TCP write error: {e}");
+        log::error!(target: "network", "TCP write error: {e}");
     }
 }
 
 /// Route a decoded `TcpMessage` to the appropriate handler.
 fn dispatch(msg: TcpMessage, state: &NodeState) -> TcpMessage {
     match msg {
-        TcpMessage::ListRecipes => handlers::handle_list_recipes(state),
+        TcpMessage::ListRecipes => {
+            log::debug!(target: "network", "Received ListRecipes");
+            handlers::handle_list_recipes(state)
+        }
         TcpMessage::GetRecipe { recipe_name } => {
-            log::debug!("Received GetRecipe recipe={}", recipe_name);
+            log::debug!(target: "network", "Received GetRecipe recipe={}", recipe_name);
             handlers::handle_get_recipe(state, &recipe_name)
         }
         TcpMessage::ProcessPayload { payload } => {
+            log::debug!(target: "network", "Received ProcessPayload order_id={}", payload.order_id.0);
             handlers::handle_process_payload(state, "unknown", payload)
         }
         TcpMessage::Deliver { payload, error } => handlers::handle_deliver(state, payload, error),
-        _ => TcpMessage::Error {
-            message: "unexpected message type".into(),
-        },
+        other => {
+            log::warn!(target: "network", "Unexpected message type: {:?}", other);
+            TcpMessage::Error {
+                message: "unexpected message type".into(),
+            }
+        }
     }
 }
