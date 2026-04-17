@@ -5,7 +5,7 @@ use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Paragraph};
+use ratatui::widgets::{Block, Paragraph, Wrap};
 use tui_logger::{TuiLoggerTargetWidget, TuiLoggerWidget};
 
 use crate::cli::start_tui::StartTuiArgs;
@@ -38,7 +38,9 @@ pub fn render_ui(frame: &mut Frame, app: &App, _args: &StartTuiArgs) {
 }
 
 fn render_recent_orders_block(frame: &mut Frame, area: Rect) {
-    let orders = store::get_orders();
+    let mut orders = store::get_orders();
+    orders.sort_by_key(|o| o.timestamp_ms);
+
     let lines: Vec<Line> = orders
         .iter()
         .map(|order| {
@@ -46,7 +48,10 @@ fn render_recent_orders_block(frame: &mut Frame, area: Rect) {
             let id = match order.server_id.as_ref() {
                 Some(sid) => sid.clone(),
                 None => format!("local-{}", order.id),
-            }.chars().take(8).collect::<String>();
+            }
+            .chars()
+            .take(8)
+            .collect::<String>();
 
             let (status_str, status_style) = match &order.status {
                 OrderStatus::Sending => ("Sending".to_string(), Style::new().dark_gray()),
@@ -57,15 +62,18 @@ fn render_recent_orders_block(frame: &mut Frame, area: Rect) {
                 OrderStatus::Error(msg) => (format!("Error: {msg}"), Style::new().red()),
             };
 
-            Line::from(vec![
-                Span::raw(format!("[{id}] {} ({elapsed_ms}ms ago) - ", order.recipe_name)),
-                Span::styled(status_str, status_style),
-            ])
+            Line::from(vec![Span::styled(
+                format!(
+                    "[{id}] {} ({elapsed_ms}ms ago) - {}",
+                    order.recipe_name, status_str
+                ),
+                status_style,
+            )])
         })
         .collect();
 
     frame.render_widget(
-        Paragraph::new(lines).block(
+        Paragraph::new(lines).wrap(Wrap { trim: false }).block(
             Block::bordered()
                 .title("Recent Orders")
                 .border_style(Style::new().light_cyan()),
@@ -162,7 +170,7 @@ fn render_local_agent_status_block(frame: &mut Frame, area: Rect, app: &App) {
     ]));
 
     frame.render_widget(
-        Paragraph::new(lines).block(
+        Paragraph::new(lines).wrap(Wrap { trim: false }).block(
             Block::bordered()
                 .title("Local Agent Status")
                 .border_style(Style::new().light_cyan()),

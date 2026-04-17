@@ -59,7 +59,9 @@ pub fn init_store() -> StoreGuard {
         .unwrap_or_default();
 
     ORDERS.set(RwLock::new(map)).ok();
-    StoreGuard { delete_on_drop: false }
+    StoreGuard {
+        delete_on_drop: false,
+    }
 }
 
 pub fn now_ms() -> u64 {
@@ -223,7 +225,9 @@ mod tests {
         clear_orders();
         add_order(make_order(1, "margherita"));
         assert!(std::path::Path::new(PATH).exists());
-        drop(StoreGuard { delete_on_drop: true });
+        drop(StoreGuard {
+            delete_on_drop: true,
+        });
         assert!(!std::path::Path::new(PATH).exists());
     }
 }
