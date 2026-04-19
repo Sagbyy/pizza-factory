@@ -1,6 +1,5 @@
 use clap::Args;
 
-
 #[derive(Args, Debug)]
 pub struct StartArgs {
     #[arg(long, default_value = "127.0.0.1:8000", value_name = "HOST:PORT")]

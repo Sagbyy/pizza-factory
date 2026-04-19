@@ -375,7 +375,6 @@ mod tests {
         assert_eq!(decoded, msg);
     }
 
-
     #[test]
     fn list_recipes_local_serializes_with_local_key() {
         let mut recipes = HashMap::new();
