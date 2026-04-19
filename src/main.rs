@@ -117,7 +117,10 @@ fn main() {
             }
         }
         Commands::ListCapabilities => {
-            println!("Listing capabilities...");
+            println!("Available actions:");
+            for action in server::handlers::KNOWN_ACTIONS {
+                println!("- {action}");
+            }
         }
         Commands::Client(args) => match args.command {
             ClientCommands::Order { recipe } => {

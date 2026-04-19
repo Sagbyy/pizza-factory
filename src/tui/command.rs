@@ -42,11 +42,9 @@ pub fn execute(input: &str, state: &Arc<NodeState>) {
                 }
             }
             TuiCommand::ListCapabilities => {
-                let caps = &state.identity.capabilities;
-                if caps.is_empty() {
-                    log::info!(target: "command", "No capabilities");
-                } else {
-                    log::info!(target: "command", "Capabilities: {}", caps.join(", "));
+                log::info!(target: "command", "Available actions:");
+                for action in crate::server::handlers::KNOWN_ACTIONS {
+                    log::info!(target: "command", "- {action}");
                 }
             }
             TuiCommand::ListRecipes => match handle_list_recipes(state) {

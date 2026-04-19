@@ -484,6 +484,26 @@ pub fn handle_deliver(
     }
 }
 
+pub const KNOWN_ACTIONS: &[&str] = &[
+    "AddBase",
+    "AddBasil",
+    "AddBBQSauce",
+    "AddBellPepper",
+    "AddCheese",
+    "AddChicken",
+    "AddChiliFlakes",
+    "AddGarlic",
+    "AddHam",
+    "AddMushrooms",
+    "AddOliveOil",
+    "AddOnion",
+    "AddOregano",
+    "AddPepperoni",
+    "AddPineapple",
+    "Bake",
+    "MakeDough",
+];
+
 /// Map an executed action to the line it appends to the pizza content string.
 fn apply_action(action: &crate::protocol::ActionDef, current_content: &str) -> String {
     let line = match action.name.as_str() {
