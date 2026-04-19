@@ -176,3 +176,6 @@ Possibles extensions:
 - Specification protocole: `PROTOCOLE-SPEC.md`
 - Captures reseau: `doc/pcap/*`
 - Commandes de test rapide: `src/cli/command.txt`
+- Pipeline CI: la configuration des étapes la pipeline: `.github/workflows/rust.yml`
+<img width="1903" height="988" alt="image" src="https://github.com/user-attachments/assets/4a02b5a8-49ba-40a5-b808-84dd11356f72" />
+
