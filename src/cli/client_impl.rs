@@ -98,22 +98,26 @@ fn log_info(msg: &str) {
     println!("{}  INFO {}", now_rfc3339(), msg);
 }
 
-fn print_recipe_row(name: &str, availability: &RecipeAvailability) {
+pub fn format_recipe_row(name: &str, availability: &RecipeAvailability) -> String {
     match availability {
         RecipeAvailability::Remote { remote } => {
-            println!("  - {}: available at [{}]", name, remote.host.0);
+            format!("  - {}: available at [{}]", name, remote.host.0)
         }
         RecipeAvailability::Local { local } if local.missing_actions.is_empty() => {
-            println!("  - {}: local (complete)", name);
+            format!("  - {}: local (complete)", name)
         }
         RecipeAvailability::Local { local } => {
-            println!(
+            format!(
                 "  - {}: missing actions [{}]",
                 name,
                 local.missing_actions.join(", ")
-            );
+            )
         }
     }
+}
+
+fn print_recipe_row(name: &str, availability: &RecipeAvailability) {
+    println!("{}", format_recipe_row(name, availability));
 }
 
 fn print_recipe_row_compat(name: &str, availability: &RecipeAvailabilityCompat) {

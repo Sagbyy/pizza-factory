@@ -4,7 +4,7 @@ use crossterm::event::{Event, KeyCode, KeyEventKind};
 use ratatui::DefaultTerminal;
 use tui_logger::{TuiWidgetEvent, TuiWidgetState};
 
-use crate::{cli::start_tui::StartTuiArgs, node::NodeState, tui::ui};
+use crate::{cli::start_tui::StartTuiArgs, node::NodeState, tui::command, tui::ui};
 
 pub enum Mode {
     Normal,
@@ -78,7 +78,7 @@ impl App {
                             let cmd = self.input.trim().to_string();
                             if !cmd.is_empty() {
                                 log::info!(target: "command", "> {cmd}");
-                                log::warn!(target: "command", "Unknown command: '{cmd}'");
+                                command::execute(&cmd, &self.state);
                             }
                             self.input.clear();
                             self.mode = Mode::Normal;
