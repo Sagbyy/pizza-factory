@@ -4,7 +4,7 @@ use std::sync::{Arc, RwLockReadGuard, RwLockWriteGuard};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::node::{GossipState, NodeState, PeerInfo};
-use crate::protocol::{Announce, Check, LastSeenMap, UdpMessage, Version};
+use crate::protocol::{Announce, Check, LastSeenMap, TaggedLastSeen, UdpMessage, Version};
 
 use super::transport::{decode_udp_message, is_newer_version, recv_datagram, send_udp_message};
 
@@ -14,21 +14,21 @@ fn read_gossip<'a>(node_state: &'a Arc<NodeState>) -> Result<RwLockReadGuard<'a,
     node_state
         .gossip
         .read()
-        .map_err(|_| Error::other("failed to acquire gossip read lock"))
+        .map_err(|_| Error::other("failed to acquire gossip read"))
 }
 
 fn write_gossip<'a>(node_state: &'a Arc<NodeState>) -> Result<RwLockWriteGuard<'a, GossipState>> {
     node_state
         .gossip
         .write()
-        .map_err(|_| Error::other("failed to acquire gossip write lock"))
+        .map_err(|_| Error::other("failed to acquire gossip write"))
 }
 
 fn now_micros() -> u64 {
     match SystemTime::now().duration_since(UNIX_EPOCH) {
         Ok(duration) => duration.as_micros() as u64,
         Err(err) => {
-            eprintln!("system clock error while computing UNIX timestamp: {err}");
+            eprintln!("system clock error with UNIX timestamp: {err}");
             0
         }
     }
@@ -44,6 +44,23 @@ fn heartbeat_last_seen_now() -> crate::protocol::TaggedLastSeen {
     by_code.insert(-6_i64, frac);
 
     ciborium::tag::Required(LastSeenMap::ByCode(by_code))
+}
+
+fn decode_last_seen_micros(last_seen: &TaggedLastSeen) -> Option<u64> {
+    match &last_seen.0 {
+        LastSeenMap::ByCode(by_code) => {
+            let secs = *by_code.get(&1_i64)?;
+            let micros = *by_code.get(&-6_i64)?;
+            secs.checked_mul(1_000_000)?.checked_add(micros)
+        }
+        LastSeenMap::ByAddress(_) => None,
+    }
+}
+
+fn compute_rtt_us_from_echo(last_seen: &TaggedLastSeen) -> Option<u64> {
+    let sent_at_us = decode_last_seen_micros(last_seen)?;
+    let now_us = now_micros();
+    Some(now_us.saturating_sub(sent_at_us))
 }
 
 /// Runs the shared UDP gossip service loop for a node.
@@ -190,14 +207,15 @@ pub fn handle_udp_message_shared(
             }
         }
         UdpMessage::Ping(check) => {
-            apply_check_shared(node_state, peer_addr, check)?;
+            apply_check_shared(node_state, peer_addr, check, None)?;
             Ok(Some(build_pong_from_node(
                 node_state,
                 check.last_seen.clone(),
             )?))
         }
         UdpMessage::Pong(check) => {
-            apply_check_shared(node_state, peer_addr, check)?;
+            let observed_rtt_us = compute_rtt_us_from_echo(&check.last_seen);
+            apply_check_shared(node_state, peer_addr, check, observed_rtt_us)?;
             Ok(None)
         }
     }
@@ -277,7 +295,12 @@ fn apply_announce_shared(node_state: &Arc<NodeState>, announce: &Announce) -> Re
     Ok(is_new_peer)
 }
 
-fn apply_check_shared(node_state: &Arc<NodeState>, peer_addr: &str, check: &Check) -> Result<()> {
+fn apply_check_shared(
+    node_state: &Arc<NodeState>,
+    peer_addr: &str,
+    check: &Check,
+    observed_rtt_us: Option<u64>,
+) -> Result<()> {
     let mut gossip = write_gossip(node_state)?;
     let peer = gossip
         .peers
@@ -288,6 +311,9 @@ fn apply_check_shared(node_state: &Arc<NodeState>, peer_addr: &str, check: &Chec
         peer.version = check.version.clone();
     }
     peer.last_seen_us = now_micros();
+    if let Some(rtt_us) = observed_rtt_us {
+        peer.rtt_us = Some(rtt_us);
+    }
 
     if is_newer_version(&check.version, &gossip.version) {
         gossip.version = check.version.clone();
@@ -524,6 +550,63 @@ mod tests {
             }
             other => panic!("expected Pong response, got {other:?}"),
         }
+        Ok(())
+    }
+
+    #[test]
+    fn compute_rtt_us_from_echo_extracts_numeric_last_seen() {
+        let now_us = now_micros();
+        let sent_us = now_us.saturating_sub(2_000);
+        let secs = sent_us / 1_000_000;
+        let micros = sent_us % 1_000_000;
+
+        let mut by_code = HashMap::new();
+        by_code.insert(1_i64, secs);
+        by_code.insert(-6_i64, micros);
+        let echoed = ciborium::tag::Required(LastSeenMap::ByCode(by_code));
+
+        let rtt_us = compute_rtt_us_from_echo(&echoed);
+        assert!(rtt_us.is_some());
+        let value = rtt_us.unwrap_or(0);
+        assert!(value >= 1_000);
+        assert!(value <= 200_000);
+    }
+
+    #[test]
+    fn handle_udp_message_shared_pong_updates_peer_rtt() -> Result<()> {
+        let state = build_shared_state("127.0.0.1:8050", vec!["MakeDough".to_string()]);
+
+        let now_us = now_micros();
+        let sent_us = now_us.saturating_sub(3_000);
+        let secs = sent_us / 1_000_000;
+        let micros = sent_us % 1_000_000;
+
+        let mut by_code = HashMap::new();
+        by_code.insert(1_i64, secs);
+        by_code.insert(-6_i64, micros);
+
+        let incoming = Check {
+            last_seen: ciborium::tag::Required(LastSeenMap::ByCode(by_code)),
+            version: Version {
+                counter: 7,
+                generation: 1776292969,
+            },
+        };
+
+        let response =
+            handle_udp_message_shared(&state, "127.0.0.1:8051", &UdpMessage::Pong(incoming))?;
+        assert!(response.is_none());
+
+        let gossip = read_gossip(&state)?;
+        let peer = gossip
+            .peers
+            .get("127.0.0.1:8051")
+            .ok_or_else(|| Error::other("expected peer 127.0.0.1:8051 to exist"))?;
+        assert!(peer.rtt_us.is_some());
+        let rtt = peer.rtt_us.unwrap_or(0);
+        assert!(rtt >= 1_000);
+        assert!(rtt <= 250_000);
+
         Ok(())
     }
 
