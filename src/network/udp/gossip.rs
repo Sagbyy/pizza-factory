@@ -9,6 +9,7 @@ use crate::protocol::{Announce, Check, LastSeenMap, TaggedLastSeen, UdpMessage, 
 use super::transport::{decode_udp_message, is_newer_version, recv_datagram, send_udp_message};
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(2);
+const PEER_STALE_TIMEOUT: Duration = Duration::from_secs(10);
 
 fn read_gossip<'a>(node_state: &'a Arc<NodeState>) -> Result<RwLockReadGuard<'a, GossipState>> {
     node_state
@@ -93,6 +94,7 @@ pub fn gossip_tick_shared(
     socket: &std::net::UdpSocket,
     node_state: &Arc<NodeState>,
 ) -> Result<UdpMessage> {
+    let _ = remove_stale_peers(node_state);
     let _ = send_ping_to_known_peers_shared(socket, node_state)?;
 
     let started = Instant::now();
@@ -109,6 +111,34 @@ pub fn gossip_tick_shared(
     }
 
     Ok(last_message)
+}
+
+/// Removes peers that have not been heard from for longer than `PEER_STALE_TIMEOUT`.
+///
+/// Peers that were never seen (`last_seen_us == 0`) are kept so bootstrap entries
+/// are not dropped before their first exchange.
+fn remove_stale_peers(node_state: &Arc<NodeState>) -> usize {
+    let now_us = now_micros();
+    let stale_us = PEER_STALE_TIMEOUT.as_micros() as u64;
+    let self_addr = node_state.identity.addr.clone();
+
+    let mut gossip = match write_gossip(node_state) {
+        Ok(guard) => guard,
+        Err(_) => return 0,
+    };
+
+    let before = gossip.peers.len();
+    gossip.peers.retain(|addr, info| {
+        if addr == &self_addr {
+            return true;
+        }
+        if info.last_seen_us == 0 {
+            return true;
+        }
+
+        now_us.saturating_sub(info.last_seen_us) <= stale_us
+    });
+    before.saturating_sub(gossip.peers.len())
 }
 
 /// Sends a `Ping` message to every known peer except self.
@@ -162,6 +192,33 @@ pub fn process_one_datagram_shared(
             let from_addr = from.to_string();
             if let Some(reply) = handle_udp_message_shared(node_state, &from_addr, &message)? {
                 send_udp_message(socket, &reply, &from_addr)?;
+
+                // When a peer is discovered for the first time, relay that Announce
+                // to other known peers so capabilities can propagate across hops.
+                if matches!(message, UdpMessage::Announce(_)) {
+                    let relay_targets: Vec<String> = {
+                        let gossip = read_gossip(node_state)?;
+                        gossip.peers.keys().cloned().collect()
+                    };
+
+                    let announced_addr = match &message {
+                        UdpMessage::Announce(announce) => Some(announce.node_addr.0.clone()),
+                        _ => None,
+                    };
+
+                    for target in relay_targets {
+                        if target == node_state.identity.addr {
+                            continue;
+                        }
+                        if target == from_addr {
+                            continue;
+                        }
+                        if announced_addr.as_ref().is_some_and(|addr| *addr == target) {
+                            continue;
+                        }
+                        send_udp_message(socket, &message, &target)?;
+                    }
+                }
             }
 
             Ok(message)
@@ -704,6 +761,105 @@ mod tests {
             Ok((len, from)) => {
                 return Err(Error::other(format!(
                     "expected no second announce reply, got {len} bytes from {from}"
+                )));
+            }
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn remove_stale_peers_removes_only_expired_entries() -> Result<()> {
+        let state = build_shared_state("127.0.0.1:8060", vec!["MakeDough".to_string()]);
+
+        let now_us = now_micros();
+        let stale_threshold_us = PEER_STALE_TIMEOUT.as_micros() as u64;
+
+        {
+            let mut gossip = write_gossip(&state)?;
+            let mut stale = PeerInfo::unknown();
+            stale.last_seen_us = now_us.saturating_sub(stale_threshold_us.saturating_add(1_000));
+            gossip.peers.insert("127.0.0.1:8061".to_string(), stale);
+
+            let mut fresh = PeerInfo::unknown();
+            fresh.last_seen_us = now_us.saturating_sub(1_000);
+            gossip.peers.insert("127.0.0.1:8062".to_string(), fresh);
+
+            // Never-seen bootstrap peer must be preserved.
+            gossip
+                .peers
+                .insert("127.0.0.1:8063".to_string(), PeerInfo::unknown());
+        }
+
+        let removed = remove_stale_peers(&state);
+        assert_eq!(removed, 1);
+
+        let gossip = read_gossip(&state)?;
+        assert!(!gossip.peers.contains_key("127.0.0.1:8061"));
+        assert!(gossip.peers.contains_key("127.0.0.1:8062"));
+        assert!(gossip.peers.contains_key("127.0.0.1:8063"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn process_one_datagram_shared_relays_new_peer_announce_to_other_peers() -> Result<()> {
+        let node_a = std::net::UdpSocket::bind("127.0.0.1:0")?;
+        node_a.set_read_timeout(Some(std::time::Duration::from_millis(300)))?;
+        let node_a_addr = node_a.local_addr()?;
+
+        let node_b = std::net::UdpSocket::bind("127.0.0.1:0")?;
+        node_b.set_read_timeout(Some(std::time::Duration::from_millis(300)))?;
+        let node_b_addr = node_b.local_addr()?;
+
+        let node_c = std::net::UdpSocket::bind("127.0.0.1:0")?;
+        node_c.set_read_timeout(Some(std::time::Duration::from_millis(300)))?;
+        let node_c_addr = node_c.local_addr()?;
+
+        // B knows A as bootstrap peer. C joins through B.
+        let state_b = build_shared_state(&node_b_addr.to_string(), vec!["AddBase".to_string()]);
+        {
+            let mut gossip = write_gossip(&state_b)?;
+            gossip
+                .peers
+                .insert(node_a_addr.to_string(), PeerInfo::unknown());
+        }
+
+        let announce_from_c = UdpMessage::Announce(Announce {
+            node_addr: crate::protocol::addr(node_c_addr.to_string()),
+            capabilities: vec!["Bake".to_string(), "AddOliveOil".to_string()],
+            recipes: vec![],
+            peers: vec![crate::protocol::addr(node_b_addr.to_string())],
+            version: Version {
+                counter: 1,
+                generation: 1776292969,
+            },
+        });
+
+        let payload = encode_udp_message(&announce_from_c)?;
+        node_c.send_to(&payload, node_b_addr)?;
+
+        let processed = process_one_datagram_shared(&node_b, &state_b)?;
+        assert!(matches!(processed, UdpMessage::Announce(_)));
+
+        // C still gets B's direct announce reply.
+        let mut buf_c = [0u8; 2048];
+        let (len_c, _) = node_c.recv_from(&mut buf_c)?;
+        let reply_to_c = decode_udp_message(&buf_c[..len_c])?;
+        assert!(matches!(reply_to_c, UdpMessage::Announce(_)));
+
+        // A receives relayed C announce, so it can learn C capabilities.
+        let mut buf_a = [0u8; 2048];
+        let (len_a, _) = node_a.recv_from(&mut buf_a)?;
+        let relayed_to_a = decode_udp_message(&buf_a[..len_a])?;
+        match relayed_to_a {
+            UdpMessage::Announce(ann) => {
+                assert_eq!(ann.node_addr.0, node_c_addr.to_string());
+                assert_eq!(ann.capabilities, vec!["Bake", "AddOliveOil"]);
+            }
+            other => {
+                return Err(Error::other(format!(
+                    "expected relayed Announce for node C, got {other:?}"
                 )));
             }
         }
