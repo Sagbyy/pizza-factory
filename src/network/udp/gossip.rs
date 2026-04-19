@@ -11,6 +11,17 @@ use super::transport::{decode_udp_message, is_newer_version, recv_datagram, send
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(2);
 const PEER_STALE_TIMEOUT: Duration = Duration::from_secs(10);
 
+struct AnnounceUpdate {
+    is_new_peer: bool,
+    topology_changed: bool,
+}
+
+impl AnnounceUpdate {
+    fn should_emit_announce(&self) -> bool {
+        self.is_new_peer || self.topology_changed
+    }
+}
+
 fn read_gossip<'a>(node_state: &'a Arc<NodeState>) -> Result<RwLockReadGuard<'a, GossipState>> {
     node_state
         .gossip
@@ -62,6 +73,12 @@ fn compute_rtt_us_from_echo(last_seen: &TaggedLastSeen) -> Option<u64> {
     let sent_at_us = decode_last_seen_micros(last_seen)?;
     let now_us = now_micros();
     Some(now_us.saturating_sub(sent_at_us))
+}
+
+fn next_local_version(node_state: &Arc<NodeState>) -> Result<Version> {
+    let mut gossip = write_gossip(node_state)?;
+    gossip.version.counter = gossip.version.counter.saturating_add(1);
+    Ok(gossip.version.clone())
 }
 
 /// Runs the shared UDP gossip service loop for a node.
@@ -193,17 +210,15 @@ pub fn process_one_datagram_shared(
             if let Some(reply) = handle_udp_message_shared(node_state, &from_addr, &message)? {
                 send_udp_message(socket, &reply, &from_addr)?;
 
-                // When a peer is discovered for the first time, relay that Announce
-                // to other known peers so capabilities can propagate across hops.
-                if matches!(message, UdpMessage::Announce(_)) {
+                // When a peer is discovered/topology changes, propagate our own
+                // refreshed Announce to other known peers so capabilities and
+                // peer graph converge across hops.
+                if matches!(message, UdpMessage::Announce(_))
+                    && matches!(reply, UdpMessage::Announce(_))
+                {
                     let relay_targets: Vec<String> = {
                         let gossip = read_gossip(node_state)?;
                         gossip.peers.keys().cloned().collect()
-                    };
-
-                    let announced_addr = match &message {
-                        UdpMessage::Announce(announce) => Some(announce.node_addr.0.clone()),
-                        _ => None,
                     };
 
                     for target in relay_targets {
@@ -213,10 +228,7 @@ pub fn process_one_datagram_shared(
                         if target == from_addr {
                             continue;
                         }
-                        if announced_addr.as_ref().is_some_and(|addr| *addr == target) {
-                            continue;
-                        }
-                        send_udp_message(socket, &message, &target)?;
+                        send_udp_message(socket, &reply, &target)?;
                     }
                 }
             }
@@ -252,8 +264,8 @@ pub fn handle_udp_message_shared(
 ) -> Result<Option<UdpMessage>> {
     match message {
         UdpMessage::Announce(announce) => {
-            let is_first_announce = apply_announce_shared(node_state, announce)?;
-            if is_first_announce {
+            let update = apply_announce_shared(node_state, announce)?;
+            if update.should_emit_announce() {
                 let peer_addrs = {
                     let gossip = read_gossip(node_state)?;
                     gossip.peers.keys().cloned().collect()
@@ -279,10 +291,14 @@ pub fn handle_udp_message_shared(
 }
 
 fn build_announce_from_node(node_state: &Arc<NodeState>, peers: Vec<String>) -> Result<UdpMessage> {
-    let version = {
-        let gossip = read_gossip(node_state)?;
-        gossip.version.clone()
-    };
+    let version = next_local_version(node_state)?;
+
+    let mut filtered_peers: Vec<String> = peers
+        .into_iter()
+        .filter(|peer| peer != &node_state.identity.addr)
+        .collect();
+    filtered_peers.sort();
+    filtered_peers.dedup();
 
     Ok(UdpMessage::Announce(Announce {
         node_addr: crate::protocol::addr(node_state.identity.addr.clone()),
@@ -293,7 +309,10 @@ fn build_announce_from_node(node_state: &Arc<NodeState>, peers: Vec<String>) -> 
             .iter()
             .map(|recipe| recipe.name.clone())
             .collect(),
-        peers: peers.into_iter().map(crate::protocol::addr).collect(),
+        peers: filtered_peers
+            .into_iter()
+            .map(crate::protocol::addr)
+            .collect(),
         version,
     }))
 }
@@ -325,9 +344,14 @@ fn build_pong_from_node(
     }))
 }
 
-fn apply_announce_shared(node_state: &Arc<NodeState>, announce: &Announce) -> Result<bool> {
+fn apply_announce_shared(
+    node_state: &Arc<NodeState>,
+    announce: &Announce,
+) -> Result<AnnounceUpdate> {
     let mut gossip = write_gossip(node_state)?;
+    let self_addr = node_state.identity.addr.clone();
     let is_new_peer = !gossip.peers.contains_key(&announce.node_addr.0);
+    let mut topology_changed = false;
     let peer = gossip
         .peers
         .entry(announce.node_addr.0.clone())
@@ -339,17 +363,23 @@ fn apply_announce_shared(node_state: &Arc<NodeState>, announce: &Announce) -> Re
     peer.last_seen_us = now_micros();
 
     for announced_peer in &announce.peers {
+        if announced_peer.0 == self_addr {
+            continue;
+        }
+        let inserted = !gossip.peers.contains_key(&announced_peer.0);
         gossip
             .peers
             .entry(announced_peer.0.clone())
             .or_insert_with(PeerInfo::unknown);
+        if inserted {
+            topology_changed = true;
+        }
     }
 
-    if is_newer_version(&announce.version, &gossip.version) {
-        gossip.version = announce.version.clone();
-    }
-
-    Ok(is_new_peer)
+    Ok(AnnounceUpdate {
+        is_new_peer,
+        topology_changed,
+    })
 }
 
 fn apply_check_shared(
@@ -370,10 +400,6 @@ fn apply_check_shared(
     peer.last_seen_us = now_micros();
     if let Some(rtt_us) = observed_rtt_us {
         peer.rtt_us = Some(rtt_us);
-    }
-
-    if is_newer_version(&check.version, &gossip.version) {
-        gossip.version = check.version.clone();
     }
 
     Ok(())
@@ -457,7 +483,8 @@ mod tests {
         assert_eq!(peer.recipes, vec!["Pepperoni".to_string()]);
         assert_eq!(peer.version, announce.version);
         assert!(gossip.peers.contains_key("127.0.0.1:8013"));
-        assert_eq!(gossip.version, announce.version);
+        assert_eq!(gossip.version.counter, 2);
+        assert_eq!(gossip.version.generation, 1776292969);
         Ok(())
     }
 
@@ -475,7 +502,7 @@ mod tests {
             node_addr: crate::protocol::addr("127.0.0.1:8042"),
             capabilities: vec!["Bake".to_string()],
             recipes: vec!["Pepperoni".to_string()],
-            peers: vec![crate::protocol::addr("127.0.0.1:8043")],
+            peers: vec![],
             version: Version {
                 counter: 10,
                 generation: 1776292969,
@@ -525,7 +552,8 @@ mod tests {
             .get("127.0.0.1:8022")
             .ok_or_else(|| Error::other("expected peer 127.0.0.1:8022 to exist"))?;
         assert_eq!(peer.version, incoming.version);
-        assert_eq!(gossip.version, incoming.version);
+        assert_eq!(gossip.version.counter, 1);
+        assert_eq!(gossip.version.generation, 1776292969);
         Ok(())
     }
 
@@ -848,18 +876,19 @@ mod tests {
         let reply_to_c = decode_udp_message(&buf_c[..len_c])?;
         assert!(matches!(reply_to_c, UdpMessage::Announce(_)));
 
-        // A receives relayed C announce, so it can learn C capabilities.
+        // A receives B's refreshed announce and learns C through its peers list.
         let mut buf_a = [0u8; 2048];
         let (len_a, _) = node_a.recv_from(&mut buf_a)?;
         let relayed_to_a = decode_udp_message(&buf_a[..len_a])?;
         match relayed_to_a {
             UdpMessage::Announce(ann) => {
-                assert_eq!(ann.node_addr.0, node_c_addr.to_string());
-                assert_eq!(ann.capabilities, vec!["Bake", "AddOliveOil"]);
+                assert_eq!(ann.node_addr.0, node_b_addr.to_string());
+                assert_eq!(ann.capabilities, vec!["AddBase"]);
+                assert!(ann.peers.iter().any(|p| p.0 == node_c_addr.to_string()));
             }
             other => {
                 return Err(Error::other(format!(
-                    "expected relayed Announce for node C, got {other:?}"
+                    "expected relayed Announce for node B with node C in peers, got {other:?}"
                 )));
             }
         }
