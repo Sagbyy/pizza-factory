@@ -484,7 +484,7 @@ pub fn handle_deliver(
     }
 }
 
-pub const KNOWN_ACTIONS: &[&str] = &[
+pub const KNOWN_ACTIONS: &[&str;17] = &[
     "AddBase",
     "AddBasil",
     "AddBBQSauce",
