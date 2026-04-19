@@ -16,7 +16,11 @@ struct TuiCli {
 
 #[derive(Subcommand)]
 enum TuiCommand {
+    /// Show available commands
     Help,
+    /// List capabilities exposed by this node
+    ListCapabilities,
+    /// List recipes available in the cluster
     ListRecipes,
 }
 
@@ -30,6 +34,14 @@ pub fn execute(input: &str, state: &Arc<NodeState>) {
                     if !line.starts_with("Usage:") {
                         log::info!(target: "command", "{line}");
                     }
+                }
+            }
+            TuiCommand::ListCapabilities => {
+                let caps = &state.identity.capabilities;
+                if caps.is_empty() {
+                    log::info!(target: "command", "No capabilities");
+                } else {
+                    log::info!(target: "command", "Capabilities: {}", caps.join(", "));
                 }
             }
             TuiCommand::ListRecipes => match handle_list_recipes(state) {
