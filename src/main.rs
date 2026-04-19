@@ -57,7 +57,7 @@ fn main() {
 
             let socket = UdpSocket::bind(&args.host).expect("failed to bind UDP socket");
             socket
-                .set_read_timeout(Some(std::time::Duration::from_millis(200)))
+                .set_read_timeout(Some(std::time::Duration::from_millis(500)))
                 .expect("failed to set UDP socket timeout");
             let peers = args.peers.clone();
             let udp_state = Arc::clone(&state);

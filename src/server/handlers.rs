@@ -20,17 +20,12 @@ use uuid::Uuid;
 /// Duplicates in the action sequence are collapsed — each action name appears
 /// at most once in `missing_actions`, in recipe order.
 pub fn handle_list_recipes(state: &NodeState) -> TcpMessage {
-    let mut capabilities: HashSet<String> =
-        state.identity.capabilities.iter().cloned().collect();
-    {
-        let gossip = match state.gossip.read() {
-            Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
-        };
-        for peer_info in gossip.peers.values() {
-            capabilities.extend(peer_info.capabilities.iter().cloned());
-        }
-    }
+    let capabilities: HashSet<&str> = state
+        .identity
+        .capabilities
+        .iter()
+        .map(String::as_str)
+        .collect();
 
     let mut recipes: HashMap<String, RecipeAvailability> = state
         .identity
@@ -41,7 +36,7 @@ pub fn handle_list_recipes(state: &NodeState) -> TcpMessage {
             let missing: Vec<String> = flatten_recipe(recipe)
                 .into_iter()
                 .map(|a| a.name)
-                .filter(|name| !capabilities.contains(name))
+                .filter(|name| !capabilities.contains(name.as_str()))
                 .filter(|name| seen.insert(name.clone()))
                 .collect();
 
@@ -173,11 +168,13 @@ pub fn handle_order(state: &NodeState, recipe_name: &str, stream: &mut TcpStream
 
     // Register a channel so handle_deliver can signal us when done.
     let (tx, rx) = mpsc::sync_channel(1);
-    let mut pending_orders = match state.pending_orders.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    pending_orders.insert(order_id_str.clone(), tx);
+    {
+        let mut pending_orders = match state.pending_orders.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        pending_orders.insert(order_id_str.clone(), tx);
+    }
 
     // Fetch DSL — local first, then from the peer that advertised it.
     let dsl = if is_local {
@@ -272,11 +269,13 @@ pub fn handle_order(state: &NodeState, recipe_name: &str, stream: &mut TcpStream
             message: "order timed out waiting for deliver".to_string(),
         });
 
-    let mut pending_orders = match state.pending_orders.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    pending_orders.remove(&order_id_str);
+    {
+        let mut pending_orders = match state.pending_orders.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        pending_orders.remove(&order_id_str);
+    }
 
     // Stamp the correct recipe_name (handle_deliver leaves it empty).
     match result {
@@ -628,15 +627,10 @@ mod tests {
     /// Create a connected loopback stream pair for tests that need a TcpStream.
     /// Returns (client_side, server_side).
     fn make_stream_pair() -> (TcpStream, TcpStream) {
-        let listener =
-            std::net::TcpListener::bind("127.0.0.1:0").expect("test listener bind should succeed");
-        let addr = listener
-            .local_addr()
-            .expect("test listener local_addr should succeed");
-        let client = TcpStream::connect(addr).expect("test client connect should succeed");
-        let (server, _) = listener
-            .accept()
-            .expect("test listener accept should succeed");
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let client = TcpStream::connect(addr).unwrap();
+        let (server, _) = listener.accept().unwrap();
         (client, server)
     }
 
@@ -693,7 +687,10 @@ mod tests {
     fn handle_list_recipes_returns_remote_host_when_recipe_is_remote_only() {
         let state = build_state(vec![], vec![]);
         {
-            let mut gossip = state.gossip.write().unwrap_or_else(|e| e.into_inner());
+            let mut gossip = match state.gossip.write() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
             gossip.peers.insert(
                 "127.0.0.1:8000".to_string(),
                 PeerInfo {
@@ -725,7 +722,10 @@ mod tests {
     fn handle_list_recipes_remote_host_is_deterministic_across_multiple_peers() {
         let state = build_state(vec![], vec![]);
         {
-            let mut gossip = state.gossip.write().unwrap_or_else(|e| e.into_inner());
+            let mut gossip = match state.gossip.write() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
             gossip.peers.insert(
                 "127.0.0.1:8002".to_string(),
                 PeerInfo {
@@ -766,80 +766,14 @@ mod tests {
         }
     }
 
-    #[test]
-    fn handle_list_recipes_uses_peer_capabilities_for_missing_actions() {
-        let mut recipe = Recipe {
-            name: "Margherita".to_string(),
-            steps: vec![],
-            source: "Margherita = AddBase -> AddCheese -> Bake".to_string(),
-        };
-        recipe.steps = vec![
-            Step::Single(ActionDef {
-                name: "AddBase".to_string(),
-                params: HashMap::new(),
-            }),
-            Step::Single(ActionDef {
-                name: "AddCheese".to_string(),
-                params: HashMap::new(),
-            }),
-            Step::Single(ActionDef {
-                name: "Bake".to_string(),
-                params: HashMap::new(),
-            }),
-        ];
-
-        let state = NodeState {
-            identity: Identity {
-                addr: "127.0.0.1:8000".to_string(),
-                capabilities: vec!["AddBase".to_string()],
-                recipes: vec![recipe],
-            },
-            gossip: RwLock::new(NodeGossipState {
-                peers: HashMap::from([(
-                    "127.0.0.1:8001".to_string(),
-                    PeerInfo {
-                        capabilities: vec!["AddCheese".to_string()],
-                        recipes: vec![],
-                        version: Version {
-                            counter: 1,
-                            generation: 1,
-                        },
-                        last_seen_us: 1,
-                        rtt_us: None,
-                    },
-                )]),
-                version: Version {
-                    counter: 1,
-                    generation: 1,
-                },
-            }),
-            pending_orders: Mutex::new(HashMap::new()),
-        };
-
-        let response = handle_list_recipes(&state);
-        match response {
-            TcpMessage::RecipeListAnswer { recipes } => match recipes.get("Margherita") {
-                Some(RecipeAvailability::Local { local }) => {
-                    assert_eq!(local.missing_actions, vec!["Bake".to_string()]);
-                }
-                other => panic!("expected local availability, got {other:?}"),
-            },
-            other => panic!("expected RecipeListAnswer, got {other:?}"),
-        }
-    }
-
     /// Build a shared Arc<NodeState> bound to a random port, also returning the
     /// TcpListener at that port so tests can accept the `deliver` connection.
     fn build_arc_state(
         capabilities: Vec<&str>,
         recipes: Vec<&str>,
     ) -> (Arc<NodeState>, std::net::TcpListener) {
-        let deliver_listener = std::net::TcpListener::bind("127.0.0.1:0")
-            .expect("deliver listener bind should succeed");
-        let addr = deliver_listener
-            .local_addr()
-            .expect("deliver listener local_addr should succeed")
-            .to_string();
+        let deliver_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = deliver_listener.local_addr().unwrap().to_string();
 
         let local_recipes = recipes
             .into_iter()
@@ -880,8 +814,8 @@ mod tests {
     ) -> thread::JoinHandle<()> {
         thread::spawn(move || {
             if let Ok((mut stream, _)) = listener.accept() {
-                let bytes = read_frame(&mut stream).expect("deliver frame should be readable");
-                let msg: TcpMessage = from_cbor(&bytes).expect("deliver frame should decode");
+                let bytes = read_frame(&mut stream).unwrap();
+                let msg: TcpMessage = from_cbor(&bytes).unwrap();
                 // No ack written back — deliver is fire-and-forget.
                 if let TcpMessage::Deliver { payload, error } = msg {
                     handle_deliver(&state, payload, error);
@@ -902,8 +836,8 @@ mod tests {
         let response = handle_order(&state, "Margherita", &mut server);
 
         // Frame 1: OrderReceipt written directly to the stream.
-        let receipt_bytes = read_frame(&mut client).expect("receipt frame should be readable");
-        let receipt: TcpMessage = from_cbor(&receipt_bytes).expect("receipt frame should decode");
+        let receipt_bytes = read_frame(&mut client).unwrap();
+        let receipt: TcpMessage = from_cbor(&receipt_bytes).unwrap();
         assert!(
             matches!(receipt, TcpMessage::OrderReceipt { .. }),
             "expected OrderReceipt as frame 1, got {receipt:?}"
@@ -931,10 +865,7 @@ mod tests {
         // Case 2: a peer claims to know the recipe but is unreachable.
         // Port 19999 is used so tests never hit a real running agent.
         {
-            let mut gossip = match state.gossip.write() {
-                Ok(guard) => guard,
-                Err(poisoned) => poisoned.into_inner(),
-            };
+            let mut gossip = state.gossip.write().unwrap();
             gossip.peers.insert(
                 "127.0.0.1:19999".to_string(),
                 PeerInfo {
@@ -965,20 +896,14 @@ mod tests {
         let state = build_state(vec!["MakeDough"], vec![]);
 
         // Bind a listener so handle_process_payload can deliver to it.
-        let deliver_listener = std::net::TcpListener::bind("127.0.0.1:0")
-            .expect("deliver listener bind should succeed");
-        let delivery_addr = deliver_listener
-            .local_addr()
-            .expect("deliver listener local_addr should succeed")
-            .to_string();
+        let deliver_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let delivery_addr = deliver_listener.local_addr().unwrap().to_string();
 
         // Accept the deliver — no ack written back (fire-and-forget protocol).
         let deliver_handle: thread::JoinHandle<TcpMessage> = thread::spawn(move || {
-            let (mut stream, _) = deliver_listener
-                .accept()
-                .expect("deliver listener accept should succeed");
-            let bytes = read_frame(&mut stream).expect("deliver frame should be readable");
-            from_cbor(&bytes).expect("deliver frame should decode")
+            let (mut stream, _) = deliver_listener.accept().unwrap();
+            let bytes = read_frame(&mut stream).unwrap();
+            from_cbor(&bytes).unwrap()
         });
 
         let payload = ProcessPayload {
@@ -997,9 +922,7 @@ mod tests {
         let _response = handle_process_payload(&state, "TestRecipe", payload);
 
         // The deliver must have arrived at the listener.
-        let received = deliver_handle
-            .join()
-            .expect("deliver listener thread should join");
+        let received = deliver_handle.join().unwrap();
         match received {
             TcpMessage::Deliver { payload, error } => {
                 assert!(error.is_none(), "expected no error in deliver");
@@ -1027,20 +950,14 @@ mod tests {
     #[test]
     fn handle_process_payload_reports_candidate_peer_when_missing_capability() {
         let state = build_state(vec!["Bake"], vec![]);
-        let deliver_listener = std::net::TcpListener::bind("127.0.0.1:0")
-            .expect("deliver listener bind should succeed");
-        let delivery_addr = deliver_listener
-            .local_addr()
-            .expect("deliver listener local_addr should succeed")
-            .to_string();
+        let deliver_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let delivery_addr = deliver_listener.local_addr().unwrap().to_string();
 
         // Accept the failure deliver and inspect its payload + error.
         let deliver_handle: thread::JoinHandle<TcpMessage> = thread::spawn(move || {
-            let (mut stream, _) = deliver_listener
-                .accept()
-                .expect("deliver listener accept should succeed");
-            let bytes = read_frame(&mut stream).expect("deliver frame should be readable");
-            from_cbor(&bytes).expect("deliver frame should decode")
+            let (mut stream, _) = deliver_listener.accept().unwrap();
+            let bytes = read_frame(&mut stream).unwrap();
+            from_cbor(&bytes).unwrap()
         });
 
         let payload = ProcessPayload {
@@ -1063,9 +980,7 @@ mod tests {
             "expected placeholder CompletedOrder after failure deliver, got {response:?}"
         );
 
-        let received = deliver_handle
-            .join()
-            .expect("deliver listener thread should join");
+        let received = deliver_handle.join().unwrap();
         match received {
             TcpMessage::Deliver { payload, error } => {
                 assert_eq!(payload.action_index, 0, "action should not advance");
@@ -1085,11 +1000,13 @@ mod tests {
         let order_id = uuid::Uuid::new_v4();
         let order_id_str = order_id.to_string();
         let (tx, rx) = mpsc::sync_channel(1);
-        let mut pending_orders = match state.pending_orders.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
-        };
-        pending_orders.insert(order_id_str.clone(), tx);
+        {
+            let mut pending_orders = match state.pending_orders.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            pending_orders.insert(order_id_str.clone(), tx);
+        }
 
         let payload = ProcessPayload {
             order_id: crate::protocol::uuid(order_id),
@@ -1121,12 +1038,8 @@ mod tests {
         spawn_deliver_handler(deliver_listener, Arc::clone(&state));
 
         // Remote peer that advertises recipe + MakeDough but fails on AddBasil.
-        let remote_listener = std::net::TcpListener::bind("127.0.0.1:0")
-            .expect("remote listener bind should succeed");
-        let remote_addr = remote_listener
-            .local_addr()
-            .expect("remote listener local_addr should succeed")
-            .to_string();
+        let remote_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let remote_addr = remote_listener.local_addr().unwrap().to_string();
         {
             let mut gossip = match state.gossip.write() {
                 Ok(guard) => guard,
@@ -1150,19 +1063,17 @@ mod tests {
         let delivery_addr = state.identity.addr.clone();
         let remote_handle = thread::spawn(move || {
             for _ in 0..2 {
-                let (mut stream, _) = remote_listener
-                    .accept()
-                    .expect("remote listener accept should succeed");
-                let req_bytes = read_frame(&mut stream).expect("request frame should be readable");
-                let req: TcpMessage = from_cbor(&req_bytes).expect("request frame should decode");
+                let (mut stream, _) = remote_listener.accept().unwrap();
+                let req_bytes = read_frame(&mut stream).unwrap();
+                let req: TcpMessage = from_cbor(&req_bytes).unwrap();
 
                 match req {
                     TcpMessage::GetRecipe { recipe_name } => {
                         assert_eq!(recipe_name, "Margherita");
                         let recipe = "Margherita = MakeDough -> AddBasil(leaves=3)".to_string();
                         let resp = TcpMessage::RecipeAnswer { recipe };
-                        let resp_bytes = to_cbor(&resp).expect("recipe answer should encode");
-                        write_frame(&mut stream, &resp_bytes).expect("recipe answer should write");
+                        let resp_bytes = to_cbor(&resp).unwrap();
+                        write_frame(&mut stream, &resp_bytes).unwrap();
                     }
                     TcpMessage::ProcessPayload { payload } => {
                         // Simulate last-capable peer sending deliver failure to ordering host.
@@ -1170,17 +1081,15 @@ mod tests {
                             payload,
                             error: Some("Action AddBasil not available".to_string()),
                         };
-                        send_deliver(&delivery_addr, &deliver)
-                            .expect("deliver relay should succeed");
+                        send_deliver(&delivery_addr, &deliver).unwrap();
 
                         // Return placeholder response to satisfy forward_to_peer.
                         let resp = TcpMessage::CompletedOrder {
                             recipe_name: "unknown".to_string(),
                             result: String::new(),
                         };
-                        let resp_bytes = to_cbor(&resp).expect("placeholder answer should encode");
-                        write_frame(&mut stream, &resp_bytes)
-                            .expect("placeholder answer should write");
+                        let resp_bytes = to_cbor(&resp).unwrap();
+                        write_frame(&mut stream, &resp_bytes).unwrap();
                     }
                     other => panic!("unexpected request at remote peer: {other:?}"),
                 }
@@ -1190,8 +1099,8 @@ mod tests {
         let (mut client, mut server) = make_stream_pair();
         let response = handle_order(&state, "Margherita", &mut server);
 
-        let receipt_bytes = read_frame(&mut client).expect("receipt frame should be readable");
-        let receipt: TcpMessage = from_cbor(&receipt_bytes).expect("receipt frame should decode");
+        let receipt_bytes = read_frame(&mut client).unwrap();
+        let receipt: TcpMessage = from_cbor(&receipt_bytes).unwrap();
         assert!(
             matches!(receipt, TcpMessage::OrderReceipt { .. }),
             "expected OrderReceipt as frame 1, got {receipt:?}"
@@ -1201,8 +1110,6 @@ mod tests {
             "expected FailedOrder as frame 2, got {response:?}"
         );
 
-        remote_handle
-            .join()
-            .expect("remote peer thread should join");
+        remote_handle.join().unwrap();
     }
 }

@@ -1,5 +1,5 @@
-# Pizza Factory - Agent Distribue Rust
-
+# Pizza Factory - Agent Distribue Rust Groupe 2 4AL1
+Lien vers Git: https://github.com/Sagbyy/pizza-factory
 ## 1. Objectif du projet
 
 Ce projet implémente un agent et un client compatibles sur le thème production de pizzas.
