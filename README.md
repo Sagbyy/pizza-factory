@@ -1,4 +1,7 @@
-# Pizza Factory - Agent Distribue Rust Groupe 2 4AL1
+# Pizza Factory - Agent Distribue P2P Rust Groupe 2 4AL1
+
+![TUI](screenshots/pizza-factory.png)
+
 Lien vers Git: https://github.com/Sagbyy/pizza-factory
 
 ## Bonus réalisés:
