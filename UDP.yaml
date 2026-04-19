@@ -1,0 +1,249 @@
+peers:
+  - peer: 0
+    host: 127.0.0.1
+    port: 8001
+  - peer: 1
+    host: 127.0.0.1
+    port: 8000
+packets:
+  - packet: 1029
+    peer: 0
+    index: 0
+    timestamp: 1776203464.732210200
+    data: !!binary |
+      oWhBbm5vdW5jZaVpbm9kZV9hZGRy2QEEbjEyNy4wLjAuMTo4MDAxbGNhcGFiaWxpdGllc4JpTWFr
+      ZURvdWdoZ0FkZEJhc2VncmVjaXBlc4BlcGVlcnOB2QEEbjEyNy4wLjAuMTo4MDAwZ3ZlcnNpb26i
+      Z2NvdW50ZXIBamdlbmVyYXRpb24aad62yA==
+  - packet: 1030
+    peer: 1
+    index: 0
+    timestamp: 1776203464.732883800
+    data: !!binary |
+      oWhBbm5vdW5jZaVpbm9kZV9hZGRy2QEEbjEyNy4wLjAuMTo4MDAwbGNhcGFiaWxpdGllc4JpTWFr
+      ZURvdWdoZ0FkZEJhc2VncmVjaXBlc4VpUGVwcGVyb25pZkZ1bmdoaWpNYXJnaGVyaXRhb1F1YXR0
+      cm9Gb3JtYWdnaWhNYXJpbmFyYWVwZWVyc4HZAQRuMTI3LjAuMC4xOjgwMDFndmVyc2lvbqJnY291
+      bnRlcgFqZ2VuZXJhdGlvbhpp3rbC
+  - packet: 1067
+    peer: 0
+    index: 1
+    timestamp: 1776203466.743809700
+    data: !!binary |
+      oWRQaW5nomlsYXN0X3NlZW7ZA+miJRoACy8UARpp3rbIZ3ZlcnNpb26iZ2NvdW50ZXIBamdlbmVy
+      YXRpb24aad62wg==
+  - packet: 1068
+    peer: 1
+    index: 1
+    timestamp: 1776203466.743949600
+    data: !!binary |
+      oWRQb25nomlsYXN0X3NlZW7ZA+miJRoACy8UARpp3rbIZ3ZlcnNpb26iZ2NvdW50ZXIBamdlbmVy
+      YXRpb24aad62wg==
+  - packet: 1069
+    peer: 1
+    index: 2
+    timestamp: 1776203466.896996800
+    data: !!binary |
+      oWRQaW5nomlsYXN0X3NlZW7ZA+miJRoACy6oARpp3rbIZ3ZlcnNpb26iZ2NvdW50ZXIBamdlbmVy
+      YXRpb24aad62yA==
+  - packet: 1070
+    peer: 0
+    index: 2
+    timestamp: 1776203466.897115900
+    data: !!binary |
+      oWRQb25nomlsYXN0X3NlZW7ZA+miJRoACy6oARpp3rbIZ3ZlcnNpb26iZ2NvdW50ZXIBamdlbmVy
+      YXRpb24aad62yA==
+  - packet: 1077
+    peer: 0
+    index: 3
+    timestamp: 1776203468.740040100
+    data: !!binary |
+      oWRQaW5nomlsYXN0X3NlZW7ZA+miJRoAC1qaARpp3rbKZ3ZlcnNpb26iZ2NvdW50ZXIBamdlbmVy
+      YXRpb24aad62wg==
+  - packet: 1078
+    peer: 1
+    index: 3
+    timestamp: 1776203468.740154300
+    data: !!binary |
+      oWRQb25nomlsYXN0X3NlZW7ZA+miJRoAC1qaARpp3rbKZ3ZlcnNpb26iZ2NvdW50ZXIBamdlbmVy
+      YXRpb24aad62wg==
+  - packet: 1085
+    peer: 1
+    index: 4
+    timestamp: 1776203468.898459300
+    data: !!binary |
+      oWRQaW5nomlsYXN0X3NlZW7ZA+miJRoADbCmARpp3rbKZ3ZlcnNpb26iZ2NvdW50ZXIBamdlbmVy
+      YXRpb24aad62yA==
+  - packet: 1086
+    peer: 0
+    index: 4
+    timestamp: 1776203468.898635100
+    data: !!binary |
+      oWRQb25nomlsYXN0X3NlZW7ZA+miJRoADbCmARpp3rbKZ3ZlcnNpb26iZ2NvdW50ZXIBamdlbmVy
+      YXRpb24aad62yA==
+  - packet: 1117
+    peer: 0
+    index: 5
+    timestamp: 1776203470.739458400
+    data: !!binary |
+      oWRQaW5nomlsYXN0X3NlZW7ZA+miJRoAC0t8ARpp3rbMZ3ZlcnNpb26iZ2NvdW50ZXIBamdlbmVy
+      YXRpb24aad62wg==
+  - packet: 1118
+    peer: 1
+    index: 5
+    timestamp: 1776203470.739595700
+    data: !!binary |
+      oWRQb25nomlsYXN0X3NlZW7ZA+miJRoAC0t8ARpp3rbMZ3ZlcnNpb26iZ2NvdW50ZXIBamdlbmVy
+      YXRpb24aad62wg==
+  - packet: 1119
+    peer: 1
+    index: 6
+    timestamp: 1776203470.896162300
+    data: !!binary |
+      oWRQaW5nomlsYXN0X3NlZW7ZA+miJRoADbaUARpp3rbMZ3ZlcnNpb26iZ2NvdW50ZXIBamdlbmVy
+      YXRpb24aad62yA==
+  - packet: 1120
+    peer: 0
+    index: 6
+    timestamp: 1776203470.896362800
+    data: !!binary |
+      oWRQb25nomlsYXN0X3NlZW7ZA+miJRoADbaUARpp3rbMZ3ZlcnNpb26iZ2NvdW50ZXIBamdlbmVy
+      YXRpb24aad62yA==
+  - packet: 1157
+    peer: 0
+    index: 7
+    timestamp: 1776203472.735352300
+    data: !!binary |
+      oWRQaW5nomlsYXN0X3NlZW7ZA+miJRoAC0llARpp3rbOZ3ZlcnNpb26iZ2NvdW50ZXIBamdlbmVy
+      YXRpb24aad62wg==
+  - packet: 1158
+    peer: 1
+    index: 7
+    timestamp: 1776203472.735432000
+    data: !!binary |
+      oWRQb25nomlsYXN0X3NlZW7ZA+miJRoAC0llARpp3rbOZ3ZlcnNpb26iZ2NvdW50ZXIBamdlbmVy
+      YXRpb24aad62wg==
+  - packet: 1159
+    peer: 1
+    index: 8
+    timestamp: 1776203472.906090500
+    data: !!binary |
+      oWRQaW5nomlsYXN0X3NlZW7ZA+miJRoADa3AARpp3rbOZ3ZlcnNpb26iZ2NvdW50ZXIBamdlbmVy
+      YXRpb24aad62yA==
+  - packet: 1160
+    peer: 0
+    index: 8
+    timestamp: 1776203472.906172100
+    data: !!binary |
+      oWRQb25nomlsYXN0X3NlZW7ZA+miJRoADa3AARpp3rbOZ3ZlcnNpb26iZ2NvdW50ZXIBamdlbmVy
+      YXRpb24aad62yA==
+  - packet: 1171
+    peer: 0
+    index: 9
+    timestamp: 1776203474.730981400
+    data: !!binary |
+      oWRQaW5nomlsYXN0X3NlZW7ZA+miJRoACzkGARpp3rbQZ3ZlcnNpb26iZ2NvdW50ZXIBamdlbmVy
+      YXRpb24aad62wg==
+  - packet: 1172
+    peer: 1
+    index: 9
+    timestamp: 1776203474.731080600
+    data: !!binary |
+      oWRQb25nomlsYXN0X3NlZW7ZA+miJRoACzkGARpp3rbQZ3ZlcnNpb26iZ2NvdW50ZXIBamdlbmVy
+      YXRpb24aad62wg==
+  - packet: 1173
+    peer: 1
+    index: 10
+    timestamp: 1776203474.901520600
+    data: !!binary |
+      oWRQaW5nomlsYXN0X3NlZW7ZA+miJRoADdPeARpp3rbQZ3ZlcnNpb26iZ2NvdW50ZXIBamdlbmVy
+      YXRpb24aad62yA==
+  - packet: 1174
+    peer: 0
+    index: 10
+    timestamp: 1776203474.901600500
+    data: !!binary |
+      oWRQb25nomlsYXN0X3NlZW7ZA+miJRoADdPeARpp3rbQZ3ZlcnNpb26iZ2NvdW50ZXIBamdlbmVy
+      YXRpb24aad62yA==
+  - packet: 1181
+    peer: 0
+    index: 11
+    timestamp: 1776203476.743235000
+    data: !!binary |
+      oWRQaW5nomlsYXN0X3NlZW7ZA+miJRoACyfqARpp3rbSZ3ZlcnNpb26iZ2NvdW50ZXIBamdlbmVy
+      YXRpb24aad62wg==
+  - packet: 1182
+    peer: 1
+    index: 11
+    timestamp: 1776203476.743298900
+    data: !!binary |
+      oWRQb25nomlsYXN0X3NlZW7ZA+miJRoACyfqARpp3rbSZ3ZlcnNpb26iZ2NvdW50ZXIBamdlbmVy
+      YXRpb24aad62wg==
+  - packet: 1187
+    peer: 1
+    index: 12
+    timestamp: 1776203476.905616300
+    data: !!binary |
+      oWRQaW5nomlsYXN0X3NlZW7ZA+miJRoADcI1ARpp3rbSZ3ZlcnNpb26iZ2NvdW50ZXIBamdlbmVy
+      YXRpb24aad62yA==
+  - packet: 1188
+    peer: 0
+    index: 12
+    timestamp: 1776203476.905755500
+    data: !!binary |
+      oWRQb25nomlsYXN0X3NlZW7ZA+miJRoADcI1ARpp3rbSZ3ZlcnNpb26iZ2NvdW50ZXIBamdlbmVy
+      YXRpb24aad62yA==
+  - packet: 1225
+    peer: 0
+    index: 13
+    timestamp: 1776203478.738141600
+    data: !!binary |
+      oWRQaW5nomlsYXN0X3NlZW7ZA+miJRoAC1eiARpp3rbUZ3ZlcnNpb26iZ2NvdW50ZXIBamdlbmVy
+      YXRpb24aad62wg==
+  - packet: 1226
+    peer: 1
+    index: 13
+    timestamp: 1776203478.738323700
+    data: !!binary |
+      oWRQb25nomlsYXN0X3NlZW7ZA+miJRoAC1eiARpp3rbUZ3ZlcnNpb26iZ2NvdW50ZXIBamdlbmVy
+      YXRpb24aad62wg==
+  - packet: 1227
+    peer: 1
+    index: 14
+    timestamp: 1776203478.892334600
+    data: !!binary |
+      oWRQaW5nomlsYXN0X3NlZW7ZA+miJRoADdI6ARpp3rbUZ3ZlcnNpb26iZ2NvdW50ZXIBamdlbmVy
+      YXRpb24aad62yA==
+  - packet: 1228
+    peer: 0
+    index: 14
+    timestamp: 1776203478.892442400
+    data: !!binary |
+      oWRQb25nomlsYXN0X3NlZW7ZA+miJRoADdI6ARpp3rbUZ3ZlcnNpb26iZ2NvdW50ZXIBamdlbmVy
+      YXRpb24aad62yA==
+  - packet: 1265
+    peer: 0
+    index: 15
+    timestamp: 1776203480.734736400
+    data: !!binary |
+      oWRQaW5nomlsYXN0X3NlZW7ZA+miJRoAC0RuARpp3rbWZ3ZlcnNpb26iZ2NvdW50ZXIBamdlbmVy
+      YXRpb24aad62wg==
+  - packet: 1266
+    peer: 1
+    index: 15
+    timestamp: 1776203480.734815500
+    data: !!binary |
+      oWRQb25nomlsYXN0X3NlZW7ZA+miJRoAC0RuARpp3rbWZ3ZlcnNpb26iZ2NvdW50ZXIBamdlbmVy
+      YXRpb24aad62wg==
+  - packet: 1267
+    peer: 1
+    index: 16
+    timestamp: 1776203480.890811200
+    data: !!binary |
+      oWRQaW5nomlsYXN0X3NlZW7ZA+miJRoADZ5LARpp3rbWZ3ZlcnNpb26iZ2NvdW50ZXIBamdlbmVy
+      YXRpb24aad62yA==
+  - packet: 1268
+    peer: 0
+    index: 16
+    timestamp: 1776203480.890926500
+    data: !!binary |
+      oWRQb25nomlsYXN0X3NlZW7ZA+miJRoADZ5LARpp3rbWZ3ZlcnNpb26iZ2NvdW50ZXIBamdlbmVy
+      YXRpb24aad62yA==

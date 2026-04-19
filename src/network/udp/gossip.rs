@@ -1,0 +1,927 @@
+use std::collections::HashMap;
+use std::io::{Error, Result};
+use std::sync::{Arc, RwLockReadGuard, RwLockWriteGuard};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+use crate::node::{GossipState, NodeState, PeerInfo};
+use crate::protocol::{Announce, Check, LastSeenMap, TaggedLastSeen, UdpMessage, Version};
+
+use super::transport::{decode_udp_message, is_newer_version, recv_datagram, send_udp_message};
+
+const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(2);
+const PEER_STALE_TIMEOUT: Duration = Duration::from_secs(10);
+
+struct AnnounceUpdate {
+    is_new_peer: bool,
+    topology_changed: bool,
+}
+
+impl AnnounceUpdate {
+    fn should_emit_announce(&self) -> bool {
+        self.is_new_peer || self.topology_changed
+    }
+}
+
+fn read_gossip<'a>(node_state: &'a Arc<NodeState>) -> Result<RwLockReadGuard<'a, GossipState>> {
+    node_state
+        .gossip
+        .read()
+        .map_err(|_| Error::other("failed to acquire gossip read"))
+}
+
+fn write_gossip<'a>(node_state: &'a Arc<NodeState>) -> Result<RwLockWriteGuard<'a, GossipState>> {
+    node_state
+        .gossip
+        .write()
+        .map_err(|_| Error::other("failed to acquire gossip write"))
+}
+
+fn now_micros() -> u64 {
+    match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(duration) => duration.as_micros() as u64,
+        Err(err) => {
+            eprintln!("system clock error with UNIX timestamp: {err}");
+            0
+        }
+    }
+}
+
+fn heartbeat_last_seen_now() -> crate::protocol::TaggedLastSeen {
+    let micros = now_micros();
+    let secs = micros / 1_000_000;
+    let frac = micros % 1_000_000;
+
+    let mut by_code = HashMap::new();
+    by_code.insert(1_i64, secs);
+    by_code.insert(-6_i64, frac);
+
+    ciborium::tag::Required(LastSeenMap::ByCode(by_code))
+}
+
+fn decode_last_seen_micros(last_seen: &TaggedLastSeen) -> Option<u64> {
+    match &last_seen.0 {
+        LastSeenMap::ByCode(by_code) => {
+            let secs = *by_code.get(&1_i64)?;
+            let micros = *by_code.get(&-6_i64)?;
+            secs.checked_mul(1_000_000)?.checked_add(micros)
+        }
+        LastSeenMap::ByAddress(_) => None,
+    }
+}
+
+fn compute_rtt_us_from_echo(last_seen: &TaggedLastSeen) -> Option<u64> {
+    let sent_at_us = decode_last_seen_micros(last_seen)?;
+    let now_us = now_micros();
+    Some(now_us.saturating_sub(sent_at_us))
+}
+
+fn next_local_version(node_state: &Arc<NodeState>) -> Result<Version> {
+    let mut gossip = write_gossip(node_state)?;
+    gossip.version.counter = gossip.version.counter.saturating_add(1);
+    Ok(gossip.version.clone())
+}
+
+/// Runs the shared UDP gossip service loop for a node.
+///
+/// Sends an initial `Announce` to bootstrap peers, then continuously executes
+/// one heartbeat tick every 2 seconds.
+pub fn run_gossip_service_shared(
+    socket: &std::net::UdpSocket,
+    node_state: Arc<NodeState>,
+    peers: &[String],
+) -> Result<()> {
+    let announce = build_announce_from_node(&node_state, peers.to_vec())?;
+    for peer in peers {
+        if peer == &node_state.identity.addr {
+            continue;
+        }
+        send_udp_message(socket, &announce, peer)?;
+    }
+
+    loop {
+        gossip_tick_shared(socket, &node_state)?;
+    }
+}
+
+/// Executes one gossip iteration:
+///
+/// 1. sends pings,
+/// 2. processes incoming datagrams until the next heartbeat slot.
+pub fn gossip_tick_shared(
+    socket: &std::net::UdpSocket,
+    node_state: &Arc<NodeState>,
+) -> Result<UdpMessage> {
+    let _ = remove_stale_peers(node_state);
+    let _ = send_announce_to_known_peers_shared(socket, node_state)?;
+    let _ = send_ping_to_known_peers_shared(socket, node_state)?;
+
+    let started = Instant::now();
+    let mut last_message = UdpMessage::Pong(Check {
+        last_seen: heartbeat_last_seen_now(),
+        version: Version {
+            counter: 0,
+            generation: 0,
+        },
+    });
+
+    while started.elapsed() < HEARTBEAT_INTERVAL {
+        last_message = process_one_datagram_shared(socket, node_state)?;
+    }
+
+    Ok(last_message)
+}
+
+/// Sends a fresh `Announce` message to every known peer except self.
+///
+/// This keeps recipe and peer topology information refreshed even if the
+/// initial bootstrap announce was missed.
+pub fn send_announce_to_known_peers_shared(
+    socket: &std::net::UdpSocket,
+    node_state: &Arc<NodeState>,
+) -> Result<usize> {
+    let peer_addrs: Vec<String> = {
+        let gossip = read_gossip(node_state)?;
+        gossip.peers.keys().cloned().collect()
+    };
+    let announce = build_announce_from_node(node_state, peer_addrs)?;
+
+    let mut sent = 0usize;
+    let target_addrs: Vec<String> = {
+        let gossip = read_gossip(node_state)?;
+        gossip.peers.keys().cloned().collect()
+    };
+
+    for peer_addr in target_addrs {
+        if peer_addr == node_state.identity.addr {
+            continue;
+        }
+        send_udp_message(socket, &announce, &peer_addr)?;
+        sent += 1;
+    }
+
+    Ok(sent)
+}
+
+/// Removes peers that have not been heard from for longer than `PEER_STALE_TIMEOUT`.
+///
+/// Peers that were never seen (`last_seen_us == 0`) are kept so bootstrap entries
+/// are not dropped before their first exchange.
+fn remove_stale_peers(node_state: &Arc<NodeState>) -> usize {
+    let now_us = now_micros();
+    let stale_us = PEER_STALE_TIMEOUT.as_micros() as u64;
+    let self_addr = node_state.identity.addr.clone();
+
+    let mut gossip = match write_gossip(node_state) {
+        Ok(guard) => guard,
+        Err(_) => return 0,
+    };
+
+    let before = gossip.peers.len();
+    gossip.peers.retain(|addr, info| {
+        if addr == &self_addr {
+            return true;
+        }
+        if info.last_seen_us == 0 {
+            return true;
+        }
+
+        now_us.saturating_sub(info.last_seen_us) <= stale_us
+    });
+    before.saturating_sub(gossip.peers.len())
+}
+
+/// Sends a `Ping` message to every known peer except self.
+///
+/// Returns the number of peers that were successfully targeted.
+pub fn send_ping_to_known_peers_shared(
+    socket: &std::net::UdpSocket,
+    node_state: &Arc<NodeState>,
+) -> Result<usize> {
+    let ping = build_ping_from_node(node_state)?;
+    let peer_addrs: Vec<String> = {
+        let gossip = read_gossip(node_state)?;
+        gossip.peers.keys().cloned().collect()
+    };
+
+    let mut sent = 0usize;
+    for peer_addr in peer_addrs {
+        if peer_addr == node_state.identity.addr {
+            continue;
+        }
+        send_udp_message(socket, &ping, &peer_addr)?;
+        sent += 1;
+    }
+
+    Ok(sent)
+}
+
+/// Reads and handles a single incoming UDP datagram.
+///
+/// On timeout / would-block, returns a placeholder `Pong` so the caller can
+/// continue looping without treating it as a fatal error.
+pub fn process_one_datagram_shared(
+    socket: &std::net::UdpSocket,
+    node_state: &Arc<NodeState>,
+) -> Result<UdpMessage> {
+    match recv_datagram(socket) {
+        Ok((bytes, from)) => {
+            let message = match decode_udp_message(&bytes) {
+                Ok(msg) => msg,
+                Err(e) => {
+                    eprintln!("UDP decode error from {from}: {e}");
+                    return Ok(UdpMessage::Pong(Check {
+                        last_seen: heartbeat_last_seen_now(),
+                        version: Version {
+                            counter: 0,
+                            generation: 0,
+                        },
+                    }));
+                }
+            };
+            let from_addr = from.to_string();
+            if let Some(reply) = handle_udp_message_shared(node_state, &from_addr, &message)? {
+                send_udp_message(socket, &reply, &from_addr)?;
+
+                // When a peer is discovered/topology changes, propagate the
+                // incoming Announce to other known peers so capabilities and
+                // peer graph converge across hops.
+                if matches!(message, UdpMessage::Announce(_)) {
+                    let relay_targets: Vec<String> = {
+                        let gossip = read_gossip(node_state)?;
+                        gossip.peers.keys().cloned().collect()
+                    };
+
+                    for target in relay_targets {
+                        if target == node_state.identity.addr {
+                            continue;
+                        }
+                        if target == from_addr {
+                            continue;
+                        }
+                        send_udp_message(socket, &message, &target)?;
+                    }
+                }
+            }
+
+            Ok(message)
+        }
+        Err(e)
+            if e.kind() == std::io::ErrorKind::WouldBlock
+                || e.kind() == std::io::ErrorKind::TimedOut
+                || e.kind() == std::io::ErrorKind::ConnectionReset =>
+        {
+            Ok(UdpMessage::Pong(Check {
+                last_seen: heartbeat_last_seen_now(),
+                version: Version {
+                    counter: 0,
+                    generation: 0,
+                },
+            }))
+        }
+        Err(e) => Err(e),
+    }
+}
+
+/// Applies one UDP message to shared node state and optionally builds a reply.
+///
+/// - `Announce` updates known peer data and replies with own `Announce` if peer is newly discovered.
+/// - `Ping` updates liveness/version data and returns a `Pong` reply.
+/// - `Pong` only updates liveness/version data.
+pub fn handle_udp_message_shared(
+    node_state: &Arc<NodeState>,
+    peer_addr: &str,
+    message: &UdpMessage,
+) -> Result<Option<UdpMessage>> {
+    match message {
+        UdpMessage::Announce(announce) => {
+            let update = apply_announce_shared(node_state, announce)?;
+            if update.should_emit_announce() {
+                let peer_addrs = {
+                    let gossip = read_gossip(node_state)?;
+                    gossip.peers.keys().cloned().collect()
+                };
+                Ok(Some(build_announce_from_node(node_state, peer_addrs)?))
+            } else {
+                Ok(None)
+            }
+        }
+        UdpMessage::Ping(check) => {
+            apply_check_shared(node_state, peer_addr, check, None)?;
+            Ok(Some(build_pong_from_node(
+                node_state,
+                check.last_seen.clone(),
+            )?))
+        }
+        UdpMessage::Pong(check) => {
+            let observed_rtt_us = compute_rtt_us_from_echo(&check.last_seen);
+            apply_check_shared(node_state, peer_addr, check, observed_rtt_us)?;
+            Ok(None)
+        }
+    }
+}
+
+fn build_announce_from_node(node_state: &Arc<NodeState>, peers: Vec<String>) -> Result<UdpMessage> {
+    let version = next_local_version(node_state)?;
+
+    let mut filtered_peers: Vec<String> = peers
+        .into_iter()
+        .filter(|peer| peer != &node_state.identity.addr)
+        .collect();
+    filtered_peers.sort();
+    filtered_peers.dedup();
+
+    Ok(UdpMessage::Announce(Announce {
+        node_addr: crate::protocol::addr(node_state.identity.addr.clone()),
+        capabilities: node_state.identity.capabilities.clone(),
+        recipes: node_state
+            .identity
+            .recipes
+            .iter()
+            .map(|recipe| recipe.name.clone())
+            .collect(),
+        peers: filtered_peers
+            .into_iter()
+            .map(crate::protocol::addr)
+            .collect(),
+        version,
+    }))
+}
+
+fn build_ping_from_node(node_state: &Arc<NodeState>) -> Result<UdpMessage> {
+    let version = {
+        let gossip = read_gossip(node_state)?;
+        gossip.version.clone()
+    };
+
+    Ok(UdpMessage::Ping(Check {
+        last_seen: heartbeat_last_seen_now(),
+        version,
+    }))
+}
+
+fn build_pong_from_node(
+    node_state: &Arc<NodeState>,
+    echoed_last_seen: crate::protocol::TaggedLastSeen,
+) -> Result<UdpMessage> {
+    let version = {
+        let gossip = read_gossip(node_state)?;
+        gossip.version.clone()
+    };
+
+    Ok(UdpMessage::Pong(Check {
+        last_seen: echoed_last_seen,
+        version,
+    }))
+}
+
+fn apply_announce_shared(
+    node_state: &Arc<NodeState>,
+    announce: &Announce,
+) -> Result<AnnounceUpdate> {
+    let mut gossip = write_gossip(node_state)?;
+    let self_addr = node_state.identity.addr.clone();
+    let is_new_peer = !gossip.peers.contains_key(&announce.node_addr.0);
+    let mut topology_changed = false;
+    let peer = gossip
+        .peers
+        .entry(announce.node_addr.0.clone())
+        .or_insert_with(PeerInfo::unknown);
+
+    peer.capabilities = announce.capabilities.clone();
+    peer.recipes = announce.recipes.clone();
+    peer.version = announce.version.clone();
+    peer.last_seen_us = now_micros();
+
+    for announced_peer in &announce.peers {
+        if announced_peer.0 == self_addr {
+            continue;
+        }
+        let inserted = !gossip.peers.contains_key(&announced_peer.0);
+        gossip
+            .peers
+            .entry(announced_peer.0.clone())
+            .or_insert_with(PeerInfo::unknown);
+        if inserted {
+            topology_changed = true;
+        }
+    }
+
+    Ok(AnnounceUpdate {
+        is_new_peer,
+        topology_changed,
+    })
+}
+
+fn apply_check_shared(
+    node_state: &Arc<NodeState>,
+    peer_addr: &str,
+    check: &Check,
+    observed_rtt_us: Option<u64>,
+) -> Result<()> {
+    let mut gossip = write_gossip(node_state)?;
+    let peer = gossip
+        .peers
+        .entry(peer_addr.to_string())
+        .or_insert_with(PeerInfo::unknown);
+
+    if is_newer_version(&check.version, &peer.version) {
+        peer.version = check.version.clone();
+    }
+    peer.last_seen_us = now_micros();
+    if let Some(rtt_us) = observed_rtt_us {
+        peer.rtt_us = Some(rtt_us);
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, Mutex, RwLock};
+
+    use super::super::transport::encode_udp_message;
+    use crate::node::{GossipState as NodeGossipState, Identity, NodeState};
+    use crate::protocol::{LastSeenMap, UdpMessage, Version};
+
+    fn build_shared_state(addr: &str, capabilities: Vec<String>) -> Arc<NodeState> {
+        Arc::new(NodeState {
+            identity: Identity {
+                addr: addr.to_string(),
+                capabilities,
+                recipes: vec![],
+            },
+            gossip: RwLock::new(NodeGossipState {
+                peers: HashMap::new(),
+                version: Version {
+                    counter: 1,
+                    generation: 1776292969,
+                },
+            }),
+            pending_orders: Mutex::new(HashMap::new()),
+        })
+    }
+
+    #[test]
+    fn udp_message_roundtrip_over_helpers() -> Result<()> {
+        let message = UdpMessage::Announce(Announce {
+            node_addr: crate::protocol::addr("127.0.0.1:8000"),
+            capabilities: vec!["MakeDough".to_string()],
+            recipes: vec!["Margherita".to_string()],
+            peers: vec![crate::protocol::addr("127.0.0.1:8002")],
+            version: Version {
+                counter: 3,
+                generation: 1776292969,
+            },
+        });
+
+        let encoded = encode_udp_message(&message)?;
+        let decoded = decode_udp_message(&encoded)?;
+
+        assert_eq!(decoded, message);
+        Ok(())
+    }
+
+    #[test]
+    fn handle_udp_message_shared_updates_peer_from_announce() -> Result<()> {
+        let state = build_shared_state("127.0.0.1:8010", vec!["MakeDough".to_string()]);
+
+        let announce = Announce {
+            node_addr: crate::protocol::addr("127.0.0.1:8012"),
+            capabilities: vec!["Bake".to_string()],
+            recipes: vec!["Pepperoni".to_string()],
+            peers: vec![crate::protocol::addr("127.0.0.1:8013")],
+            version: Version {
+                counter: 1,
+                generation: 1776292969,
+            },
+        };
+
+        let response = handle_udp_message_shared(
+            &state,
+            "127.0.0.1:8012",
+            &UdpMessage::Announce(announce.clone()),
+        )?;
+        assert!(matches!(response, Some(UdpMessage::Announce(_))));
+
+        let gossip = read_gossip(&state)?;
+        let peer = gossip
+            .peers
+            .get("127.0.0.1:8012")
+            .ok_or_else(|| Error::other("expected peer 127.0.0.1:8012 to exist"))?;
+        assert_eq!(peer.capabilities, vec!["Bake".to_string()]);
+        assert_eq!(peer.recipes, vec!["Pepperoni".to_string()]);
+        assert_eq!(peer.version, announce.version);
+        assert!(gossip.peers.contains_key("127.0.0.1:8013"));
+        assert_eq!(gossip.version.counter, 2);
+        assert_eq!(gossip.version.generation, 1776292969);
+        Ok(())
+    }
+
+    #[test]
+    fn handle_udp_message_shared_known_peer_announce_does_not_reply() -> Result<()> {
+        let state = build_shared_state("127.0.0.1:8040", vec!["MakeDough".to_string()]);
+        {
+            let mut gossip = write_gossip(&state)?;
+            gossip
+                .peers
+                .insert("127.0.0.1:8042".to_string(), PeerInfo::unknown());
+        }
+
+        let announce = Announce {
+            node_addr: crate::protocol::addr("127.0.0.1:8042"),
+            capabilities: vec!["Bake".to_string()],
+            recipes: vec!["Pepperoni".to_string()],
+            peers: vec![],
+            version: Version {
+                counter: 10,
+                generation: 1776292969,
+            },
+        };
+
+        let response = handle_udp_message_shared(
+            &state,
+            "127.0.0.1:8042",
+            &UdpMessage::Announce(announce.clone()),
+        )?;
+
+        assert!(response.is_none());
+
+        let gossip = read_gossip(&state)?;
+        let peer = gossip
+            .peers
+            .get("127.0.0.1:8042")
+            .ok_or_else(|| Error::other("expected peer 127.0.0.1:8042 to exist"))?;
+        assert_eq!(peer.capabilities, vec!["Bake".to_string()]);
+        assert_eq!(peer.recipes, vec!["Pepperoni".to_string()]);
+        assert_eq!(peer.version, announce.version);
+        Ok(())
+    }
+
+    #[test]
+    fn handle_udp_message_shared_ping_returns_pong_and_updates_version() -> Result<()> {
+        let state = build_shared_state("127.0.0.1:8020", vec!["MakeDough".to_string()]);
+        let incoming = Check {
+            last_seen: ciborium::tag::Required(LastSeenMap::ByCode(HashMap::new())),
+            version: Version {
+                counter: 4,
+                generation: 1776292969,
+            },
+        };
+
+        let response = handle_udp_message_shared(
+            &state,
+            "127.0.0.1:8022",
+            &UdpMessage::Ping(incoming.clone()),
+        )?;
+
+        assert!(matches!(response, Some(UdpMessage::Pong(_))));
+        let gossip = read_gossip(&state)?;
+        let peer = gossip
+            .peers
+            .get("127.0.0.1:8022")
+            .ok_or_else(|| Error::other("expected peer 127.0.0.1:8022 to exist"))?;
+        assert_eq!(peer.version, incoming.version);
+        assert_eq!(gossip.version.counter, 1);
+        assert_eq!(gossip.version.generation, 1776292969);
+        Ok(())
+    }
+
+    #[test]
+    fn send_ping_to_known_peers_shared_sends_to_all_neighbors() -> Result<()> {
+        let receiver_a = std::net::UdpSocket::bind("127.0.0.1:0")?;
+        receiver_a.set_read_timeout(Some(std::time::Duration::from_millis(200)))?;
+        let addr_a = receiver_a.local_addr()?;
+
+        let receiver_b = std::net::UdpSocket::bind("127.0.0.1:0")?;
+        receiver_b.set_read_timeout(Some(std::time::Duration::from_millis(200)))?;
+        let addr_b = receiver_b.local_addr()?;
+
+        let sender = std::net::UdpSocket::bind("127.0.0.1:0")?;
+        let sender_addr = sender.local_addr()?;
+        let state = build_shared_state(&sender_addr.to_string(), vec!["MakeDough".to_string()]);
+
+        {
+            let mut gossip = write_gossip(&state)?;
+            gossip.peers.insert(addr_a.to_string(), PeerInfo::unknown());
+            gossip.peers.insert(addr_b.to_string(), PeerInfo::unknown());
+        }
+
+        let sent = send_ping_to_known_peers_shared(&sender, &state)?;
+        assert_eq!(sent, 2);
+
+        let (bytes_a, from_a) = recv_datagram(&receiver_a)?;
+        let (bytes_b, from_b) = recv_datagram(&receiver_b)?;
+
+        assert_eq!(from_a, sender_addr);
+        assert_eq!(from_b, sender_addr);
+        let ping_a = decode_udp_message(&bytes_a)?;
+        let ping_b = decode_udp_message(&bytes_b)?;
+        assert!(matches!(ping_a, UdpMessage::Ping(_)));
+        assert!(matches!(ping_b, UdpMessage::Ping(_)));
+
+        let assert_numeric_last_seen = |message: UdpMessage| match message {
+            UdpMessage::Ping(Check { last_seen, .. }) => match last_seen.0 {
+                LastSeenMap::ByCode(m) => {
+                    assert!(m.contains_key(&1));
+                    assert!(m.contains_key(&-6));
+                }
+                LastSeenMap::ByAddress(_) => {
+                    panic!("expected numeric-keyed last_seen in Ping")
+                }
+            },
+            _ => panic!("expected Ping"),
+        };
+
+        assert_numeric_last_seen(ping_a);
+        assert_numeric_last_seen(ping_b);
+        Ok(())
+    }
+
+    #[test]
+    fn handle_udp_message_shared_ping_echoes_last_seen_in_pong() -> Result<()> {
+        let state = build_shared_state("127.0.0.1:8030", vec!["MakeDough".to_string()]);
+
+        let mut by_code = HashMap::new();
+        by_code.insert(1_i64, 1_776_203_464);
+        by_code.insert(-6_i64, 732_948);
+        let incoming = Check {
+            last_seen: ciborium::tag::Required(LastSeenMap::ByCode(by_code.clone())),
+            version: Version {
+                counter: 2,
+                generation: 1776292969,
+            },
+        };
+
+        let response = handle_udp_message_shared(
+            &state,
+            "127.0.0.1:8031",
+            &UdpMessage::Ping(incoming.clone()),
+        )?;
+
+        match response {
+            Some(UdpMessage::Pong(Check { last_seen, .. })) => {
+                assert_eq!(last_seen.0, LastSeenMap::ByCode(by_code));
+            }
+            other => panic!("expected Pong response, got {other:?}"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn compute_rtt_us_from_echo_extracts_numeric_last_seen() {
+        let now_us = now_micros();
+        let sent_us = now_us.saturating_sub(2_000);
+        let secs = sent_us / 1_000_000;
+        let micros = sent_us % 1_000_000;
+
+        let mut by_code = HashMap::new();
+        by_code.insert(1_i64, secs);
+        by_code.insert(-6_i64, micros);
+        let echoed = ciborium::tag::Required(LastSeenMap::ByCode(by_code));
+
+        let rtt_us = compute_rtt_us_from_echo(&echoed);
+        assert!(rtt_us.is_some());
+        let value = rtt_us.unwrap_or(0);
+        assert!(value >= 1_000);
+        assert!(value <= 200_000);
+    }
+
+    #[test]
+    fn handle_udp_message_shared_pong_updates_peer_rtt() -> Result<()> {
+        let state = build_shared_state("127.0.0.1:8050", vec!["MakeDough".to_string()]);
+
+        let now_us = now_micros();
+        let sent_us = now_us.saturating_sub(3_000);
+        let secs = sent_us / 1_000_000;
+        let micros = sent_us % 1_000_000;
+
+        let mut by_code = HashMap::new();
+        by_code.insert(1_i64, secs);
+        by_code.insert(-6_i64, micros);
+
+        let incoming = Check {
+            last_seen: ciborium::tag::Required(LastSeenMap::ByCode(by_code)),
+            version: Version {
+                counter: 7,
+                generation: 1776292969,
+            },
+        };
+
+        let response =
+            handle_udp_message_shared(&state, "127.0.0.1:8051", &UdpMessage::Pong(incoming))?;
+        assert!(response.is_none());
+
+        let gossip = read_gossip(&state)?;
+        let peer = gossip
+            .peers
+            .get("127.0.0.1:8051")
+            .ok_or_else(|| Error::other("expected peer 127.0.0.1:8051 to exist"))?;
+        assert!(peer.rtt_us.is_some());
+        let rtt = peer.rtt_us.unwrap_or(0);
+        assert!(rtt >= 1_000);
+        assert!(rtt <= 250_000);
+
+        Ok(())
+    }
+
+    #[test]
+    fn process_one_datagram_shared_announce_from_new_peer_emits_reply() -> Result<()> {
+        let receiver = std::net::UdpSocket::bind("127.0.0.1:0")?;
+        receiver.set_read_timeout(Some(std::time::Duration::from_millis(200)))?;
+        let receiver_addr = receiver.local_addr()?;
+
+        let sender = std::net::UdpSocket::bind("127.0.0.1:0")?;
+        sender.set_read_timeout(Some(std::time::Duration::from_millis(200)))?;
+        let sender_addr = sender.local_addr()?;
+
+        let state = build_shared_state(&receiver_addr.to_string(), vec!["MakeDough".to_string()]);
+
+        let announce = UdpMessage::Announce(Announce {
+            node_addr: crate::protocol::addr(sender_addr.to_string()),
+            capabilities: vec!["Bake".to_string()],
+            recipes: vec!["Pepperoni".to_string()],
+            peers: vec![crate::protocol::addr(receiver_addr.to_string())],
+            version: Version {
+                counter: 1,
+                generation: 1776292969,
+            },
+        });
+
+        let payload = encode_udp_message(&announce)?;
+        sender.send_to(&payload, receiver_addr)?;
+
+        let processed = process_one_datagram_shared(&receiver, &state)?;
+        assert!(matches!(processed, UdpMessage::Announce(_)));
+
+        let mut buf = [0u8; 2048];
+        let len = match sender.recv_from(&mut buf) {
+            Ok((len, _)) => len,
+            Err(err)
+                if matches!(
+                    err.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                0
+            }
+            Err(err) => {
+                return Err(Error::other(format!(
+                    "failed to receive announce reply from receiver: {err}"
+                )));
+            }
+        };
+        assert!(len > 0, "Expected Announce reply from receiver");
+        Ok(())
+    }
+
+    #[test]
+    fn process_one_datagram_shared_second_announce_no_reply() -> Result<()> {
+        let receiver = std::net::UdpSocket::bind("127.0.0.1:0")?;
+        receiver.set_read_timeout(Some(std::time::Duration::from_millis(200)))?;
+        let receiver_addr = receiver.local_addr()?;
+
+        let sender = std::net::UdpSocket::bind("127.0.0.1:0")?;
+        sender.set_read_timeout(Some(std::time::Duration::from_millis(200)))?;
+        let sender_addr = sender.local_addr()?;
+
+        let state = build_shared_state(&receiver_addr.to_string(), vec!["MakeDough".to_string()]);
+
+        let announce = UdpMessage::Announce(Announce {
+            node_addr: crate::protocol::addr(sender_addr.to_string()),
+            capabilities: vec!["Bake".to_string()],
+            recipes: vec!["Pepperoni".to_string()],
+            peers: vec![crate::protocol::addr(receiver_addr.to_string())],
+            version: Version {
+                counter: 1,
+                generation: 1776292969,
+            },
+        });
+
+        let payload = encode_udp_message(&announce)?;
+
+        sender.send_to(&payload, receiver_addr)?;
+        let _ = process_one_datagram_shared(&receiver, &state)?;
+
+        let mut buf = [0u8; 2048];
+        let _ = sender.recv_from(&mut buf);
+
+        sender.send_to(&payload, receiver_addr)?;
+        let _ = process_one_datagram_shared(&receiver, &state)?;
+
+        match sender.recv_from(&mut buf) {
+            Err(err) => {
+                assert!(matches!(
+                    err.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ));
+            }
+            Ok((len, from)) => {
+                return Err(Error::other(format!(
+                    "expected no second announce reply, got {len} bytes from {from}"
+                )));
+            }
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn remove_stale_peers_removes_only_expired_entries() -> Result<()> {
+        let state = build_shared_state("127.0.0.1:8060", vec!["MakeDough".to_string()]);
+
+        let now_us = now_micros();
+        let stale_threshold_us = PEER_STALE_TIMEOUT.as_micros() as u64;
+
+        {
+            let mut gossip = write_gossip(&state)?;
+            let mut stale = PeerInfo::unknown();
+            stale.last_seen_us = now_us.saturating_sub(stale_threshold_us.saturating_add(1_000));
+            gossip.peers.insert("127.0.0.1:8061".to_string(), stale);
+
+            let mut fresh = PeerInfo::unknown();
+            fresh.last_seen_us = now_us.saturating_sub(1_000);
+            gossip.peers.insert("127.0.0.1:8062".to_string(), fresh);
+
+            // Never-seen bootstrap peer must be preserved.
+            gossip
+                .peers
+                .insert("127.0.0.1:8063".to_string(), PeerInfo::unknown());
+        }
+
+        let removed = remove_stale_peers(&state);
+        assert_eq!(removed, 1);
+
+        let gossip = read_gossip(&state)?;
+        assert!(!gossip.peers.contains_key("127.0.0.1:8061"));
+        assert!(gossip.peers.contains_key("127.0.0.1:8062"));
+        assert!(gossip.peers.contains_key("127.0.0.1:8063"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn process_one_datagram_shared_relays_new_peer_announce_to_other_peers() -> Result<()> {
+        let node_a = std::net::UdpSocket::bind("127.0.0.1:0")?;
+        node_a.set_read_timeout(Some(std::time::Duration::from_millis(300)))?;
+        let node_a_addr = node_a.local_addr()?;
+
+        let node_b = std::net::UdpSocket::bind("127.0.0.1:0")?;
+        node_b.set_read_timeout(Some(std::time::Duration::from_millis(300)))?;
+        let node_b_addr = node_b.local_addr()?;
+
+        let node_c = std::net::UdpSocket::bind("127.0.0.1:0")?;
+        node_c.set_read_timeout(Some(std::time::Duration::from_millis(300)))?;
+        let node_c_addr = node_c.local_addr()?;
+
+        // B knows A as bootstrap peer. C joins through B.
+        let state_b = build_shared_state(&node_b_addr.to_string(), vec!["AddBase".to_string()]);
+        {
+            let mut gossip = write_gossip(&state_b)?;
+            gossip
+                .peers
+                .insert(node_a_addr.to_string(), PeerInfo::unknown());
+        }
+
+        let announce_from_c = UdpMessage::Announce(Announce {
+            node_addr: crate::protocol::addr(node_c_addr.to_string()),
+            capabilities: vec!["Bake".to_string(), "AddOliveOil".to_string()],
+            recipes: vec![],
+            peers: vec![crate::protocol::addr(node_b_addr.to_string())],
+            version: Version {
+                counter: 1,
+                generation: 1776292969,
+            },
+        });
+
+        let payload = encode_udp_message(&announce_from_c)?;
+        node_c.send_to(&payload, node_b_addr)?;
+
+        let processed = process_one_datagram_shared(&node_b, &state_b)?;
+        assert!(matches!(processed, UdpMessage::Announce(_)));
+
+        // C still gets B's direct announce reply.
+        let mut buf_c = [0u8; 2048];
+        let (len_c, _) = node_c.recv_from(&mut buf_c)?;
+        let reply_to_c = decode_udp_message(&buf_c[..len_c])?;
+        assert!(matches!(reply_to_c, UdpMessage::Announce(_)));
+
+        // A receives the relayed C announce and can learn C capabilities.
+        let mut buf_a = [0u8; 2048];
+        let (len_a, _) = node_a.recv_from(&mut buf_a)?;
+        let relayed_to_a = decode_udp_message(&buf_a[..len_a])?;
+        match relayed_to_a {
+            UdpMessage::Announce(ann) => {
+                assert_eq!(ann.node_addr.0, node_c_addr.to_string());
+                assert_eq!(ann.capabilities, vec!["Bake", "AddOliveOil"]);
+            }
+            other => {
+                return Err(Error::other(format!(
+                    "expected relayed Announce for node C, got {other:?}"
+                )));
+            }
+        }
+
+        Ok(())
+    }
+}

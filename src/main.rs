@@ -19,7 +19,7 @@ use clap::Parser;
 use cli::Cli;
 use cli::client::ClientCommands;
 use cli::command::Commands;
-use network::udp::run_gossip_service_shared;
+use network::udp::gossip::run_gossip_service_shared;
 use std::net::UdpSocket;
 use std::thread;
 
