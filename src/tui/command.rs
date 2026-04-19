@@ -8,7 +8,12 @@ use crate::protocol::TcpMessage;
 use crate::server::handlers::handle_list_recipes;
 
 #[derive(Parser)]
-#[command(name = "", disable_help_flag = true, disable_help_subcommand = true, disable_version_flag = true)]
+#[command(
+    name = "",
+    disable_help_flag = true,
+    disable_help_subcommand = true,
+    disable_version_flag = true
+)]
 struct TuiCli {
     #[command(subcommand)]
     command: TuiCommand,

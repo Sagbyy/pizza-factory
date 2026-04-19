@@ -246,6 +246,10 @@ impl<'de> Deserialize<'de> for RecipeAvailability {
 /// TCP request/response messages exchanged between client and nodes.
 pub enum TcpMessage {
     ListRecipes,
+    ListCapabilities,
+    CapabilitiesAnswer {
+        capabilities: Vec<String>,
+    },
     RecipeListAnswer {
         recipes: HashMap<String, RecipeAvailability>,
     },
