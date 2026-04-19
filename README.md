@@ -1,5 +1,10 @@
 # Pizza Factory - Agent Distribue Rust Groupe 2 4AL1
 Lien vers Git: https://github.com/Sagbyy/pizza-factory
+
+## Bonus réalisés:
+- Réaliser une interface graphique ou un dashboard (TUI/GUI) pour suivre l'état de la chaîne de production.
+- Ajouter une intégration continue (CI) pour tester votre code automatiquement.
+- Réduire au maximum les unwrap(), expect() et les variables mutables (mut) ou les clones (clone()).
 ## 1. Objectif du projet
 
 Ce projet implémente un agent et un client compatibles sur le thème production de pizzas.
