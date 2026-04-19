@@ -45,8 +45,8 @@ Le protocole a été reconstruit par reverse-engineering a partir de captures r�
 Captures disponibles:
 
 - `doc/pcap/starting-peer-annouced.pcap`
-- `doc/pcap/client-command-1.pcap`
 - `doc/pcap/client-command-2.pcapng`
+- Frames sous forme yaml pour un flow UDP + un flow TCP de Wireshark. 
 
 ## 4. Architecture retenue
 
