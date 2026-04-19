@@ -71,7 +71,6 @@ pub struct PeerInfo {
     pub version: Version,
     /// Unix timestamp in microseconds of the last message received from that peer.
     pub last_seen_us: u64,
-    pub ping_sent_us: Option<u64>,
     pub rtt_us: Option<u64>,
 }
 
@@ -86,7 +85,6 @@ impl PeerInfo {
                 generation: 0,
             },
             last_seen_us: 0,
-            ping_sent_us: None,
             rtt_us: None,
         }
     }

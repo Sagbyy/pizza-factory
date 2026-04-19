@@ -699,7 +699,6 @@ mod tests {
                         generation: 1,
                     },
                     last_seen_us: 1,
-                    ping_sent_us: None,
                     rtt_us: None,
                 },
             );
@@ -732,7 +731,6 @@ mod tests {
                         generation: 1,
                     },
                     last_seen_us: 1,
-                    ping_sent_us: None,
                     rtt_us: None,
                 },
             );
@@ -746,7 +744,6 @@ mod tests {
                         generation: 1,
                     },
                     last_seen_us: 1,
-                    ping_sent_us: None,
                     rtt_us: None,
                 },
             );
@@ -881,7 +878,6 @@ mod tests {
                         generation: 1,
                     },
                     last_seen_us: 1,
-                    ping_sent_us: None,
                     rtt_us: None,
                 },
             );
@@ -1079,7 +1075,6 @@ mod tests {
                         generation: 1,
                     },
                     last_seen_us: 1,
-                    ping_sent_us: None,
                     rtt_us: None,
                 },
             );
