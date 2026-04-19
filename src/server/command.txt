@@ -4,7 +4,23 @@ cargo run -- start --host 127.0.0.1:8000 --capabilities AddBase,AddCheese,AddPep
 
 cargo run -- start --host 127.0.0.1:8002 --capabilities AddBase,AddCheese,AddPepperoni,Bake,AddOliveOil --peer 127.0.0.1:8000 --debug
 
+### LIST RECIPES
+## List recipes in local agent
+cargo run -- start --host 127.0.0.1:8003 --capabilities MakeDough,AddBase --recipes-file src/recipes/examples.recipes --debug
+./pizza_factory start --host 127.0.0.1:8002 --capabilities AddPepperoni,AddOliveOil,AddGarlic --peer 127.0.0.1:8003 --debug
+./pizza_factory start --host 127.0.0.1:8000 --capabilities Bake,AddCheese --peer 127.0.0.1:8003 --debug
+
+./pizza_factory client --peer 127.0.0.1:8000 list-recipes
+
+## List recipes in agent binaire
+./pizza_factory start --host 127.0.0.1:8000 --capabilities MakeDough --recipes-file recipes/examples.recipes --debug
+./pizza_factory start --host 127.0.0.1:8002 --capabilities AddPepperoni,AddOliveOil,AddGarlic --peer 127.0.0.1:8000 --debug
+cargo run -- start --host 127.0.0.1:8003 --capabilities AddBase,AddCheese,Bake,AddMushrooms --peer 127.0.0.1:8000 --debug
+
+./pizza_factory client --peer 127.0.0.1:8000 list-recipes
+
 ## Une commande déclenchée par votre client aboutit à une pizza livrée, en impliquant au moins une étape exécutée par votre agent et au moins une étape exécutée par le binaire fourni.
+### ORDER PIZZA
 
 ./pizza_factory start --host 127.0.0.1:8000 --capabilities MakeDough --recipes-file recipes/examples.recipes --debug
 
@@ -13,10 +29,6 @@ cargo run -- start --host 127.0.0.1:8002 --capabilities AddBase,AddCheese,AddPep
 cargo run -- start --host 127.0.0.1:8003 --capabilities AddBase,AddCheese,Bake,AddMushrooms,AddOregano --peer 127.0.0.1:8000 --debug
 cargo run -- start --host 127.0.0.1:8003 --capabilities AddBase,AddCheese,Bake,AddMushrooms,AddOregano,AddBasil,AddOregano,AddGarlic --peer 127.0.0.1:8000 --debug
 
-### List recipes tested
-cargo run -- start --host 127.0.0.1:8003 --capabilities MakeDough --recipes-file src/recipes/examples.recipes --debug
-./pizza_factory start --host 127.0.0.1:8002 --capabilities AddPepperoni,AddOliveOil,AddGarlic --peer 127.0.0.1:8003 --debug
-./pizza_factory client --peer 127.0.0.1:8000 list-recipes
 
 ### Pizza tested
 ./pizza_factory client --peer 127.0.0.1:8000 order Funghi

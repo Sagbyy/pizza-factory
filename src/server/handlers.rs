@@ -16,16 +16,20 @@ use uuid::Uuid;
 /// Build the recipe list answer for a `ListRecipes` command.
 ///
 /// For each recipe the node knows, computes which actions are required but
-/// not covered by this node's own capabilities (`missing_actions`).
+/// not covered by known cluster capabilities (`missing_actions`).
 /// Duplicates in the action sequence are collapsed — each action name appears
 /// at most once in `missing_actions`, in recipe order.
 pub fn handle_list_recipes(state: &NodeState) -> TcpMessage {
-    let capabilities: HashSet<&str> = state
-        .identity
-        .capabilities
-        .iter()
-        .map(String::as_str)
-        .collect();
+    let mut capabilities: HashSet<String> = state.identity.capabilities.iter().cloned().collect();
+    {
+        let gossip = match state.gossip.read() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        for peer_info in gossip.peers.values() {
+            capabilities.extend(peer_info.capabilities.iter().cloned());
+        }
+    }
 
     let mut recipes: HashMap<String, RecipeAvailability> = state
         .identity
@@ -36,7 +40,7 @@ pub fn handle_list_recipes(state: &NodeState) -> TcpMessage {
             let missing: Vec<String> = flatten_recipe(recipe)
                 .into_iter()
                 .map(|a| a.name)
-                .filter(|name| !capabilities.contains(name.as_str()))
+                .filter(|name| !capabilities.contains(name))
                 .filter(|name| seen.insert(name.clone()))
                 .collect();
 
@@ -676,6 +680,60 @@ mod tests {
                         local.missing_actions.is_empty(),
                         "expected local recipe to be complete"
                     );
+                }
+                other => panic!("expected local availability, got {other:?}"),
+            },
+            other => panic!("expected RecipeListAnswer, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn handle_list_recipes_local_missing_actions_account_for_peer_capabilities() {
+        let mut state = build_state(vec!["MakeDough"], vec![]);
+        state.identity.recipes = vec![Recipe {
+            name: "Margherita".to_string(),
+            steps: vec![
+                Step::Single(ActionDef {
+                    name: "MakeDough".to_string(),
+                    params: HashMap::new(),
+                }),
+                Step::Single(ActionDef {
+                    name: "AddBase".to_string(),
+                    params: HashMap::new(),
+                }),
+                Step::Single(ActionDef {
+                    name: "Bake".to_string(),
+                    params: HashMap::new(),
+                }),
+            ],
+            source: "Margherita = MakeDough -> AddBase -> Bake".to_string(),
+        }];
+
+        {
+            let mut gossip = match state.gossip.write() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            gossip.peers.insert(
+                "127.0.0.1:8002".to_string(),
+                PeerInfo {
+                    capabilities: vec!["AddBase".to_string()],
+                    recipes: vec![],
+                    version: Version {
+                        counter: 1,
+                        generation: 1,
+                    },
+                    last_seen_us: 1,
+                    rtt_us: None,
+                },
+            );
+        }
+
+        let response = handle_list_recipes(&state);
+        match response {
+            TcpMessage::RecipeListAnswer { recipes } => match recipes.get("Margherita") {
+                Some(RecipeAvailability::Local { local }) => {
+                    assert_eq!(local.missing_actions, vec!["Bake".to_string()]);
                 }
                 other => panic!("expected local availability, got {other:?}"),
             },

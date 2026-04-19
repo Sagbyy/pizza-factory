@@ -300,48 +300,6 @@ Observations interop supplementaires relevees sur le binaire de reference :
 
 - Un noeud non proprietaire peut renvoyer des recettes distantes via la forme suivante :
 
-```json
-{
-  "recipe_list_answer": {
-    "recipes": {
-      "Funghi": { "remote": { "host": "127.0.0.1:8000" } },
-      "Margherita": { "remote": { "host": "127.0.0.1:8000" } }
-    }
-  }
-}
-```
-
-- Cette forme `remote.host` doit etre traitee comme equivalente a une disponibilite distante.
-- La forme `local.missing_actions` reste presente pour les recettes locales.
-- Sur UDP, `last_seen` (tag 1001) est observe sur le binaire de reference avec une map a cles entieres, notamment `1` et `-6`.
-- Interpretation retenue sur les traces :
-  - `1` porte la composante en secondes Unix.
-  - `-6` porte la composante fractionnaire (sous-seconde).
-  - Le timestamp est de la forme `secondes.fraction`.
-- Dans les echanges heartbeat observes, le `Pong` reprend la valeur `last_seen` du `Ping` correspondant (echo de correlation).
-
-- Fermeture de la session TCP
-
-  - ```json
-     58695 → 8000 [FIN, ACK]
-
-    ```
-  Le client envoie un message FIN, indiquant qu’il souhaite terminer la communication.
-  Le serveur accuse réception, et la session TCP est ensuite fermée.
-
-
-- Certaines trames observées correspondent uniquement à des accusés de réception TCP.
-Ces paquets ne contiennent aucun payload applicatif et sont générés automatiquement
-par la pile TCP afin de garantir
-la fiabilité de la transmission.
-```json
-  58695 → 8000 [ACK]
-```
-Résumé:
-
-![img_5.png](screenshots/img_5.png)
-
-- Quand le client appelle l'agent 8002 qui n'a pas de la liste de recettes, la réponse recipe list answer est différente de celle du cas où l'agent sollicité détient la liste. 
 ![img.png](screenshots/img25.png)
 
 ```json
@@ -392,6 +350,37 @@ Résumé:
   }
 }
 ```
+
+- Cette forme `remote.host` doit etre traitee comme equivalente a une disponibilite distante.
+- La forme `local.missing_actions` reste presente pour les recettes locales.
+- Sur UDP, `last_seen` (tag 1001) est observe sur le binaire de reference avec une map a cles entieres, notamment `1` et `-6`.
+- Interpretation retenue sur les traces :
+  - `1` porte la composante en secondes Unix.
+  - `-6` porte la composante fractionnaire (sous-seconde).
+  - Le timestamp est de la forme `secondes.fraction`.
+- Dans les echanges heartbeat observes, le `Pong` reprend la valeur `last_seen` du `Ping` correspondant (echo de correlation).
+
+- Fermeture de la session TCP
+
+  - ```json
+     58695 → 8000 [FIN, ACK]
+
+    ```
+  Le client envoie un message FIN, indiquant qu’il souhaite terminer la communication.
+  Le serveur accuse réception, et la session TCP est ensuite fermée.
+
+
+- Certaines trames observées correspondent uniquement à des accusés de réception TCP.
+Ces paquets ne contiennent aucun payload applicatif et sont générés automatiquement
+par la pile TCP afin de garantir
+la fiabilité de la transmission.
+```json
+  58695 → 8000 [ACK]
+```
+Résumé:
+
+![img_5.png](screenshots/img_5.png)
+
 #### 2.2 Commande order Pepperoni
 Lancement d'un client, qui se connecte au premier agent :
 ```bash
