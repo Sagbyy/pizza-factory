@@ -112,6 +112,7 @@ pub fn gossip_tick_shared(
     node_state: &Arc<NodeState>,
 ) -> Result<UdpMessage> {
     let _ = remove_stale_peers(node_state);
+    let _ = send_announce_to_known_peers_shared(socket, node_state)?;
     let _ = send_ping_to_known_peers_shared(socket, node_state)?;
 
     let started = Instant::now();
@@ -128,6 +129,37 @@ pub fn gossip_tick_shared(
     }
 
     Ok(last_message)
+}
+
+/// Sends a fresh `Announce` message to every known peer except self.
+///
+/// This keeps recipe and peer topology information refreshed even if the
+/// initial bootstrap announce was missed.
+pub fn send_announce_to_known_peers_shared(
+    socket: &std::net::UdpSocket,
+    node_state: &Arc<NodeState>,
+) -> Result<usize> {
+    let peer_addrs: Vec<String> = {
+        let gossip = read_gossip(node_state)?;
+        gossip.peers.keys().cloned().collect()
+    };
+    let announce = build_announce_from_node(node_state, peer_addrs)?;
+
+    let mut sent = 0usize;
+    let target_addrs: Vec<String> = {
+        let gossip = read_gossip(node_state)?;
+        gossip.peers.keys().cloned().collect()
+    };
+
+    for peer_addr in target_addrs {
+        if peer_addr == node_state.identity.addr {
+            continue;
+        }
+        send_udp_message(socket, &announce, &peer_addr)?;
+        sent += 1;
+    }
+
+    Ok(sent)
 }
 
 /// Removes peers that have not been heard from for longer than `PEER_STALE_TIMEOUT`.
@@ -210,12 +242,10 @@ pub fn process_one_datagram_shared(
             if let Some(reply) = handle_udp_message_shared(node_state, &from_addr, &message)? {
                 send_udp_message(socket, &reply, &from_addr)?;
 
-                // When a peer is discovered/topology changes, propagate our own
-                // refreshed Announce to other known peers so capabilities and
+                // When a peer is discovered/topology changes, propagate the
+                // incoming Announce to other known peers so capabilities and
                 // peer graph converge across hops.
-                if matches!(message, UdpMessage::Announce(_))
-                    && matches!(reply, UdpMessage::Announce(_))
-                {
+                if matches!(message, UdpMessage::Announce(_)) {
                     let relay_targets: Vec<String> = {
                         let gossip = read_gossip(node_state)?;
                         gossip.peers.keys().cloned().collect()
@@ -228,7 +258,7 @@ pub fn process_one_datagram_shared(
                         if target == from_addr {
                             continue;
                         }
-                        send_udp_message(socket, &reply, &target)?;
+                        send_udp_message(socket, &message, &target)?;
                     }
                 }
             }
@@ -876,19 +906,18 @@ mod tests {
         let reply_to_c = decode_udp_message(&buf_c[..len_c])?;
         assert!(matches!(reply_to_c, UdpMessage::Announce(_)));
 
-        // A receives B's refreshed announce and learns C through its peers list.
+        // A receives the relayed C announce and can learn C capabilities.
         let mut buf_a = [0u8; 2048];
         let (len_a, _) = node_a.recv_from(&mut buf_a)?;
         let relayed_to_a = decode_udp_message(&buf_a[..len_a])?;
         match relayed_to_a {
             UdpMessage::Announce(ann) => {
-                assert_eq!(ann.node_addr.0, node_b_addr.to_string());
-                assert_eq!(ann.capabilities, vec!["AddBase"]);
-                assert!(ann.peers.iter().any(|p| p.0 == node_c_addr.to_string()));
+                assert_eq!(ann.node_addr.0, node_c_addr.to_string());
+                assert_eq!(ann.capabilities, vec!["Bake", "AddOliveOil"]);
             }
             other => {
                 return Err(Error::other(format!(
-                    "expected relayed Announce for node B with node C in peers, got {other:?}"
+                    "expected relayed Announce for node C, got {other:?}"
                 )));
             }
         }
