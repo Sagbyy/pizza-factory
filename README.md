@@ -3,7 +3,7 @@ Lien vers Git: https://github.com/Sagbyy/pizza-factory
 
 ## Bonus réalisés:
 - Réaliser une interface graphique ou un dashboard (TUI/GUI) pour suivre l'état de la chaîne de production.
-- Ajouter une intégration continue (CI) pour tester votre code automatiquement.
+- Ajouter une intégration continue (CI) pour tester votre code automatiquement: (fmt/check/test/doc) sur GitHub Actions
 - Réduire au maximum les unwrap(), expect() et les variables mutables (mut) ou les clones (clone()).
 ## 1. Objectif du projet
 
@@ -148,34 +148,25 @@ Résultat attendu:
 - Politique de sélection de peer basique (premier peer qui repond).
 - Gestion d'erreur reseau perfectible (retry/backoff avancé).
 
-## 10. Bonus et perspectives
-
-Possibles extensions:
-
-- Pipeline CI (fmt/check/test/doc) sur GitHub Actions.
-- Journalisation structuree (niveaux + correlation par order_id).
-- Dashboard TUI/GUI de suivi du reseau.
-- Routage optimise selon charge ou latence.
-
-## 11. Conformite aux contraintes
+## 10. Conformite aux contraintes
 
 - Langage Rust.
 - Bibliotheque standard privilegiée.
 - Concurrence via threads std et primitives std.
 - Crates utilisees: `clap`, `serde`, `ciborium`, `uuid`.
 
-## 12. Contributions individuelles
+## 11. Contributions individuelles
 
 - Herman: modèles de données + gossip UDP + CI + log.
 - Van Anh: Reverse-Engineering + Spec Protocole + Parseur de recette + handlers TCP.
 - Salahe-Eddine: Reverse-Engineering + Spec Protocole + client CLI + client TUI + CI.
 
-## 13. Annexes
+## 12. Annexes
 
 - Reverse engineering: `REVERSE-ENGINEERING.md`
 - Specification protocole: `PROTOCOLE-SPEC.md`
 - Captures reseau: `doc/pcap/*`
 - Commandes de test rapide: `src/cli/command.txt`
-- Pipeline CI: la configuration des étapes la pipeline: `.github/workflows/rust.yml`
+- Pipeline CI: (fmt/check/test/doc) sur GitHub Actions. La configuration des étapes la pipeline: `.github/workflows/rust.yml`
 <img width="1903" height="988" alt="image" src="https://github.com/user-attachments/assets/4a02b5a8-49ba-40a5-b808-84dd11356f72" />
 
